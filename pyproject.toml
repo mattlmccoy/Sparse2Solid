@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viewforge3d"
+version = "0.1.0"
+description = "Component-guided 2D reference image to clean architectural 3D model pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Matthew McCoy" }]
+dependencies = [
+  "numpy>=1.24",
+  "pillow>=10.0"
+]
+
+[project.optional-dependencies]
+video = ["imageio>=2.34"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+viewforge-plan = "viewforge3d.reference_planner:main"
+viewforge-demo = "viewforge3d.demo:main"
+viewforge-orbit = "viewforge3d.orbit:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

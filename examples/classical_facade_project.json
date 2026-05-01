@@ -1,0 +1,49 @@
+{
+  "model_id": "classical_facade_demo",
+  "scale_notes": "Toy example: dimensions are arbitrary meters. Real projects should use a plan, survey dimension, known door height, or measured facade bay.",
+  "placements": [
+    {
+      "id": "front_bay_01",
+      "component": "facade_bay",
+      "translate": [-3.6, 0.0, 0.0]
+    },
+    {
+      "id": "front_bay_02",
+      "component": "facade_bay",
+      "translate": [-1.2, 0.0, 0.0]
+    },
+    {
+      "id": "front_bay_03",
+      "component": "facade_bay",
+      "translate": [1.2, 0.0, 0.0]
+    },
+    {
+      "id": "front_bay_04",
+      "component": "facade_bay",
+      "translate": [3.6, 0.0, 0.0]
+    },
+    {
+      "id": "left_lamp",
+      "component": "lamp",
+      "translate": [-4.7, -1.45, 0.0],
+      "scale": [0.72, 0.72, 0.72]
+    },
+    {
+      "id": "center_lamp",
+      "component": "lamp",
+      "translate": [0.0, -1.45, 0.0],
+      "scale": [0.72, 0.72, 0.72]
+    },
+    {
+      "id": "right_lamp",
+      "component": "lamp",
+      "translate": [4.7, -1.45, 0.0],
+      "scale": [0.72, 0.72, 0.72]
+    },
+    {
+      "id": "upper_roof",
+      "component": "upper_level_roof_awning",
+      "translate": [0.0, 0.2, 3.45]
+    }
+  ]
+}
