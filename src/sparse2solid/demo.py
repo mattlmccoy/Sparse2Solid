@@ -13,7 +13,7 @@ DEFAULT_SPEC = ROOT / "examples" / "classical_facade_project.json"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build the ViewForge3D demo model and orbit contact sheet.")
+    parser = argparse.ArgumentParser(description="Build the Sparse2Solid demo model and orbit contact sheet.")
     parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
     parser.add_argument("--out", type=Path, default=Path("outputs/demo"))
     args = parser.parse_args()
@@ -22,7 +22,7 @@ def main() -> int:
         obj_path=Path(report["outputs"]["obj"]),
         mtl_path=Path(report["outputs"]["mtl"]),
         out_dir=args.out / "orbits",
-        title="ViewForge3D demo orbit",
+        title="Sparse2Solid demo orbit",
     )
     report["orbit"] = orbit_report
     print(json.dumps(report, indent=2))

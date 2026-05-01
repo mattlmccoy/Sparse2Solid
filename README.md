@@ -1,8 +1,8 @@
-# ViewForge3D
+# Sparse2Solid
 
-Component-guided architectural 3D reconstruction from sparse 2D reference images.
+Few 2D images to clean, solid architectural 3D reconstruction.
 
-ViewForge3D is an experimental pipeline for turning a modest set of ordinary photos into a clean, editable architectural 3D model. It is not classical photogrammetry. Instead of trying to reconstruct every surface directly from hundreds of overlapping images, it uses photos to infer repeatable semantic components, validates those components with orbit renders, and assembles them into a full building model with named geometry groups.
+Sparse2Solid is an experimental pipeline for turning a modest set of ordinary 2D photos into a clean, editable, full 3D architectural model. It is not classical photogrammetry. Instead of trying to reconstruct every surface directly from hundreds of overlapping images, it uses sparse photos to infer repeatable semantic components, validates those components with orbit renders, and assembles them into a full building model with named geometry groups.
 
 The result is closer to how a careful human modeler works:
 
@@ -14,7 +14,7 @@ The result is closer to how a careful human modeler works:
 6. Place units into a full-scale model using plan dimensions, facade rhythm, and image evidence.
 7. Check that the assembly has support paths and no unintentional floating details.
 
-This approach can produce clean results from around 15-30 useful images when the subject has architectural regularity. Traditional photogrammetry often wants 50-200 images because it needs dense feature overlap. ViewForge3D needs enough images to understand structure, repetition, scale, and hidden sides.
+This approach can produce clean results from around 15-30 useful images when the subject has architectural regularity. Traditional photogrammetry often wants 50-200 images because it needs dense feature overlap. Sparse2Solid needs enough images to understand structure, repetition, scale, and hidden sides.
 
 ## What This Is Good For
 
@@ -45,7 +45,7 @@ The central trick is that buildings are not random. A building usually contains 
 - Roofs obey simple pitch and ridge logic.
 - Balustrades, dentils, plinths, steps, and columns form rhythmic systems.
 
-Photogrammetry treats every point as something to solve from image correspondence. ViewForge3D treats images as evidence for a constrained model. One sharp closeup of a lamp can define a reusable lamp unit. One good oblique view can establish depth. One plan dimension can scale the entire footprint. Then orbit renders expose where the model is wrong.
+Photogrammetry treats every point as something to solve from image correspondence. Sparse2Solid treats images as evidence for a constrained model. One sharp closeup of a lamp can define a reusable lamp unit. One good oblique view can establish depth. One plan dimension can scale the entire footprint. Then orbit renders expose where the model is wrong.
 
 That means the pipeline is not "2D image magically becomes 3D mesh." It is:
 
@@ -98,14 +98,14 @@ Twenty good images can beat two hundred weak images if they cover:
 - the ground/base contact,
 - and the important repeating details.
 
-Traditional photogrammetry needs image overlap. ViewForge3D needs architectural evidence.
+Traditional photogrammetry needs image overlap. Sparse2Solid needs architectural evidence.
 
 ## Pipeline
 
 ### 1. Plan the reference set
 
 ```bash
-python -m viewforge3d.reference_planner "my-building" --out reference_plan.json
+python -m sparse2solid.reference_planner "my-building" --out reference_plan.json
 ```
 
 This produces a checklist describing which missing views are likely to hurt the model.
@@ -139,7 +139,7 @@ upper_roof__awning_support_2.6
 Orbit maps are deterministic review renders from the current OBJ/MTL. They are deliberately cheap and fast. They let you inspect the model from angles you did not explicitly model against.
 
 ```bash
-python -m viewforge3d.orbit outputs/demo/classical_facade_demo.obj \
+python -m sparse2solid.orbit outputs/demo/classical_facade_demo.obj \
   --mtl outputs/demo/classical_facade_demo.mtl \
   --out outputs/demo/orbits \
   --title "Demo review orbit"
@@ -168,7 +168,7 @@ The assembly stage places reviewed components into a complete structure. Placeme
 
 ### 5. Validate support chains
 
-A model can be watertight and still be wrong for physical interpretation. ViewForge3D includes structural connectivity checks that ask:
+A model can be watertight and still be wrong for physical interpretation. Sparse2Solid includes structural connectivity checks that ask:
 
 > Does every semantic piece have some chain of contact back to the ground or a parent structure?
 
@@ -177,8 +177,8 @@ This catches details that are technically present in the OBJ but are visually/ph
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USER/viewforge3d.git
-cd viewforge3d
+git clone https://github.com/YOUR_USER/Sparse2Solid.git
+cd Sparse2Solid
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"

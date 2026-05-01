@@ -109,10 +109,10 @@ def build_from_spec(spec: dict[str, Any]) -> list[MeshPart]:
 def write_project(spec_path: Path, out_dir: Path) -> dict[str, Any]:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     parts = build_from_spec(spec)
-    assets = export_parts(out_dir, spec.get("model_id", "viewforge_model"), parts)
+    assets = export_parts(out_dir, spec.get("model_id", "sparse2solid_model"), parts)
     connectivity = structural_connectivity(parts)
     report = {
-        "model_id": spec.get("model_id", "viewforge_model"),
+        "model_id": spec.get("model_id", "sparse2solid_model"),
         "source_spec": str(spec_path),
         "outputs": assets,
         "part_count": len(parts),

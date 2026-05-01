@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from viewforge3d.assembly import build_from_spec, write_project
-from viewforge3d.connectivity import structural_connectivity
-from viewforge3d.orbit import parse_obj, render_orbit_set
-from viewforge3d.reference_planner import plan_reference_set
+from sparse2solid.assembly import build_from_spec, write_project
+from sparse2solid.connectivity import structural_connectivity
+from sparse2solid.orbit import parse_obj, render_orbit_set
+from sparse2solid.reference_planner import plan_reference_set
 
 
 ROOT = Path(__file__).resolve().parents[1]

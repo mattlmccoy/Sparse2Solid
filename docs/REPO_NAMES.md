@@ -4,6 +4,8 @@ Good names for this project should signal sparse views, model forging, and clean
 
 ## Strong Candidates
 
+- `sparse2solid`
+- `Sparse2Solid`
 - `viewforge3d`
 - `sparse-to-structure`
 - `image-to-architecture`
@@ -17,12 +19,12 @@ Good names for this project should signal sparse views, model forging, and clean
 
 ## Chosen Name
 
-`viewforge3d`
+`Sparse2Solid`
 
 Why:
 
-- It is short.
-- It is not tied to one building type.
-- It suggests craft rather than magic.
+- It directly signals sparse 2D image coverage becoming solid 3D geometry.
+- It is short and memorable.
+- It does not imply hundreds of photogrammetry images are required.
 - It leaves room for future AI, CAD, and review tooling.
-- It avoids overclaiming full automatic reconstruction.
+- It avoids overclaiming fully automatic reconstruction.

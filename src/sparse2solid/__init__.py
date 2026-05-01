@@ -1,4 +1,4 @@
-"""ViewForge3D: component-guided architectural reconstruction from sparse photos."""
+"""Sparse2Solid: few-image architectural reconstruction into clean 3D models."""
 
 __all__ = [
     "assembly",

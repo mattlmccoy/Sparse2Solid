@@ -1,6 +1,6 @@
 # Method: Sparse Images to Clean Architectural 3D
 
-ViewForge3D is a hybrid reconstruction workflow. It borrows the discipline of photogrammetry, the interpretability of CAD, and the iteration loop of design review.
+Sparse2Solid is a hybrid reconstruction workflow. It borrows the discipline of photogrammetry, the interpretability of CAD, and the iteration loop of design review.
 
 ## The Core Insight
 
@@ -16,7 +16,7 @@ Photogrammetry asks:
 
 > Where is this point in 3D?
 
-ViewForge3D asks:
+Sparse2Solid asks:
 
 > What component is this, where does it repeat, and what evidence constrains it?
 
@@ -106,7 +106,7 @@ Connectivity validation finds pieces that are not supported by any preceding geo
 
 AI-generated 3D can be useful for suggestions, but architecture needs accountability. If a roofline, window rhythm, or facade ornament is wrong, the model should tell you which evidence created it and which component owns it.
 
-ViewForge3D can use AI as an assistant, but not as untracked ground truth.
+Sparse2Solid can use AI as an assistant, but not as untracked ground truth.
 
 ## Why Not Pure Photogrammetry?
 

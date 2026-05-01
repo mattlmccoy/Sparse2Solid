@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "viewforge3d"
+name = "sparse2solid"
 version = "0.1.0"
-description = "Component-guided 2D reference image to clean architectural 3D model pipeline."
+description = "Few-image sparse-view architectural 3D reconstruction into clean solid models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -20,9 +20,9 @@ video = ["imageio>=2.34"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-viewforge-plan = "viewforge3d.reference_planner:main"
-viewforge-demo = "viewforge3d.demo:main"
-viewforge-orbit = "viewforge3d.orbit:main"
+sparse2solid-plan = "sparse2solid.reference_planner:main"
+sparse2solid-demo = "sparse2solid.demo:main"
+sparse2solid-orbit = "sparse2solid.orbit:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
