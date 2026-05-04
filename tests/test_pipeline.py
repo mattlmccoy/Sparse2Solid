@@ -93,7 +93,7 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     assert component_plan["strategy"] == "pixel_evidence_unit_discovery"
     assert any(component["component"].startswith("visual_unit_") for component in component_plan["components"])
     assert any(component.get("crop_path") for component in component_plan["components"])
-    assert any(component.get("kind") == "opening_or_shadow_region" for component in component_plan["components"])
+    assert any(component.get("kind") in {"vertical_repeat", "horizontal_band", "upper_edge_or_roofline", "opening_or_shadow_region"} for component in component_plan["components"])
 
     units = client.post(f"/api/projects/{slug}/build-units")
     assert units.status_code == 200

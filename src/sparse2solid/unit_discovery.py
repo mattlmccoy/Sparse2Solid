@@ -34,6 +34,7 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
             continue
         candidates.extend(image_candidates(path, image_record))
 
+    candidates = [candidate for candidate in candidates if candidate_passes_structural_filter(candidate)]
     candidates = select_diverse_candidates(dedupe_candidates(candidates))
     units: list[dict[str, Any]] = []
     units.append(reference_envelope_unit(summary))
@@ -56,6 +57,7 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
                 "source_image": candidate["source_image"],
                 "bbox": candidate["bbox"],
                 "bbox_normalized": candidate["bbox_normalized"],
+                "crop_metrics": candidate["crop_metrics"],
                 "crop_path": crop_path.relative_to(project_dir).as_posix(),
                 "matched_images": [
                     {
@@ -69,6 +71,8 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
                 "output_folder": f"outputs/units/{unit_id}",
             }
         )
+    if len(units) == 1:
+        units[0]["evidence"].append("No crop proposals passed the structural filter; add clearer facade/detail images.")
     return units
 
 
@@ -79,6 +83,8 @@ def image_candidates(path: Path, image_record: dict[str, Any]) -> list[dict[str,
     scale = min(1.0, DISCOVERY_WIDTH / max(1, original_w))
     work = image.resize((max(1, int(original_w * scale)), max(1, int(original_h * scale))))
     arr = np.asarray(ImageOps.grayscale(work), dtype=np.float32) / 255.0
+    rgb = np.asarray(work, dtype=np.float32) / 255.0
+    roi = estimate_building_roi(rgb, arr)
     gx = np.abs(np.diff(arr, axis=1))
     gy = np.abs(np.diff(arr, axis=0))
     vertical_profile = gx.mean(axis=0) if gx.size else np.asarray([0.0])
@@ -88,18 +94,63 @@ def image_candidates(path: Path, image_record: dict[str, Any]) -> list[dict[str,
     for idx, peak in enumerate(top_peaks(vertical_profile, limit=5, min_gap=max(16, work.width // 18))):
         width = max(42, int(work.width * 0.075))
         bbox = clamp_bbox((peak - width // 2, int(work.height * 0.16), peak + width // 2, int(work.height * 0.88)), work.size)
-        candidates.append(make_candidate(path, image, bbox, scale, "vertical_repeat", image_record, vertical_profile[peak], idx))
+        if overlaps_roi(bbox, roi, work.size):
+            candidates.append(make_candidate(path, image, bbox, scale, "vertical_repeat", image_record, vertical_profile[peak], idx))
 
     for idx, peak in enumerate(top_peaks(horizontal_profile, limit=5, min_gap=max(14, work.height // 18))):
         height = max(34, int(work.height * 0.07))
         kind = "upper_edge_or_roofline" if peak < work.height * 0.36 else "horizontal_band"
         bbox = clamp_bbox((int(work.width * 0.06), peak - height // 2, int(work.width * 0.94), peak + height // 2), work.size)
-        candidates.append(make_candidate(path, image, bbox, scale, kind, image_record, horizontal_profile[peak], idx))
+        if overlaps_roi(bbox, roi, work.size):
+            candidates.append(make_candidate(path, image, bbox, scale, kind, image_record, horizontal_profile[peak], idx))
 
     for idx, bbox in enumerate(dark_region_boxes(arr, work.size)[:5]):
-        candidates.append(make_candidate(path, image, bbox, scale, "opening_or_shadow_region", image_record, 0.55, idx))
+        if overlaps_roi(bbox, roi, work.size):
+            candidates.append(make_candidate(path, image, bbox, scale, "opening_or_shadow_region", image_record, 0.55, idx))
 
     return candidates
+
+
+def estimate_building_roi(rgb: np.ndarray, gray: np.ndarray) -> tuple[int, int, int, int]:
+    height, width = gray.shape
+    maxc = rgb.max(axis=2)
+    minc = rgb.min(axis=2)
+    saturation = maxc - minc
+    red, green, blue = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    green_bias = (green - red) + (green - blue)
+    vegetation = (green >= red) & (green >= blue) & (green_bias > 0.045) & (saturation > 0.035)
+    warm_flowers = (red > green * 1.03) & (red > blue * 1.03) & (saturation > 0.12)
+    neutral_or_dark = (saturation < 0.24) & (gray > 0.16)
+    structural = neutral_or_dark & ~(vegetation | warm_flowers)
+    row_score = structural.mean(axis=1)
+    col_score = structural.mean(axis=0)
+    row_threshold = max(0.18, float(np.percentile(row_score, 68)))
+    col_threshold = max(0.10, float(np.percentile(col_score, 58)))
+    rows = np.where(row_score >= row_threshold)[0]
+    cols = np.where(col_score >= col_threshold)[0]
+    if rows.size < max(8, height * 0.08) or cols.size < max(8, width * 0.12):
+        return (0, 0, width, height)
+    y1, y2 = int(rows.min()), int(rows.max() + 1)
+    x1, x2 = int(cols.min()), int(cols.max() + 1)
+    pad_y = max(6, int(height * 0.05))
+    pad_x = max(6, int(width * 0.04))
+    return clamp_bbox((x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y), (width, height))
+
+
+def overlaps_roi(bbox: tuple[int, int, int, int], roi: tuple[int, int, int, int], size: tuple[int, int]) -> bool:
+    width, height = size
+    x1, y1, x2, y2 = bbox
+    rx1, ry1, rx2, ry2 = roi
+    inter_x = max(0, min(x2, rx2) - max(x1, rx1))
+    inter_y = max(0, min(y2, ry2) - max(y1, ry1))
+    overlap = inter_x * inter_y / max(1, (x2 - x1) * (y2 - y1))
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    center_inside = rx1 <= cx <= rx2 and ry1 <= cy <= ry2
+    not_foreground_strip = cy < height * 0.88 or (y2 - y1) > height * 0.20
+    meaningful_width = (x2 - x1) > width * 0.025
+    meaningful_height = (y2 - y1) > height * 0.025
+    return overlap >= 0.50 and center_inside and not_foreground_strip and meaningful_width and meaningful_height
 
 
 def make_candidate(
@@ -115,6 +166,7 @@ def make_candidate(
     source_bbox = tuple(int(round(value / max(scale, 1e-6))) for value in work_bbox)
     width, height = image.size
     x1, y1, x2, y2 = source_bbox
+    metrics = crop_metrics(image.crop(source_bbox))
     return {
         "kind": kind,
         "source_image": path.name,
@@ -122,14 +174,57 @@ def make_candidate(
         "bbox": [x1, y1, x2, y2],
         "bbox_normalized": [round(x1 / width, 4), round(y1 / height, 4), round(x2 / width, 4), round(y2 / height, 4)],
         "quality": image_record.get("image_quality_score", 0),
-        "score": float(score) + image_record.get("image_quality_score", 0) * 0.25,
-        "sort_key": (kind, round((x2 - x1) / max(1, width), 2), round((y2 - y1) / max(1, height), 2)),
+        "score": float(score) + image_record.get("image_quality_score", 0) * 0.20 + metrics["structural_score"] * 0.45,
+        "structural_score": metrics["structural_score"],
+        "crop_metrics": metrics,
+        "sort_key": (kind, round((x1 + x2) / max(1, width) / 2, 1), round((y1 + y2) / max(1, height) / 2, 1), round((x2 - x1) / max(1, width), 2), round((y2 - y1) / max(1, height), 2)),
         "evidence": [
             f"source image {path.name}",
             f"bbox {x1},{y1},{x2},{y2}",
             f"visual kind {kind.replace('_', ' ')}",
+            f"structural score {metrics['structural_score']:.2f}",
         ],
         "index": index,
+    }
+
+
+def crop_metrics(crop: Image.Image) -> dict[str, float]:
+    crop = crop.convert("RGB")
+    crop.thumbnail((220, 220))
+    rgb = np.asarray(crop, dtype=np.float32) / 255.0
+    gray = np.asarray(ImageOps.grayscale(crop), dtype=np.float32) / 255.0
+    if rgb.size == 0 or gray.size == 0:
+        return {"structural_score": 0.0}
+    maxc = rgb.max(axis=2)
+    minc = rgb.min(axis=2)
+    saturation = maxc - minc
+    brightness = gray
+    red, green, blue = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    green_bias = (green - red) + (green - blue)
+    vegetation = (green >= red) & (green >= blue) & (green_bias > 0.045) & (saturation > 0.035)
+    flower_warm = (red > green * 1.03) & (red > blue * 1.03) & (saturation > 0.12)
+    flower_pink = (red > 0.38) & (blue > 0.30) & (green < 0.62) & (saturation > 0.10)
+    grass = vegetation & (brightness > 0.18) & (brightness < 0.78)
+    neutral_or_masonry = (saturation < 0.22) & (brightness > 0.18)
+    dark_opening = (brightness < 0.30) & (saturation < 0.20)
+    gx = np.abs(np.diff(gray, axis=1))
+    gy = np.abs(np.diff(gray, axis=0))
+    edge_density = float(((gx > 0.10).mean() + (gy > 0.10).mean()) / 2.0) if gx.size and gy.size else 0.0
+    vertical_strength = float(gx.mean()) if gx.size else 0.0
+    horizontal_strength = float(gy.mean()) if gy.size else 0.0
+    axis_score = min(1.0, (vertical_strength + horizontal_strength) * 8.0)
+    organic_ratio = float((vegetation | flower_warm | flower_pink | grass).mean())
+    structural_color_ratio = float((neutral_or_masonry | dark_opening).mean())
+    color_score = max(0.0, min(1.0, structural_color_ratio * 1.25 - organic_ratio * 1.45))
+    edge_score = min(1.0, edge_density * 5.0 + axis_score * 0.35)
+    structural_score = max(0.0, min(1.0, color_score * 0.58 + edge_score * 0.42))
+    return {
+        "structural_score": round(structural_score, 3),
+        "organic_ratio": round(organic_ratio, 3),
+        "structural_color_ratio": round(structural_color_ratio, 3),
+        "edge_density": round(edge_density, 3),
+        "axis_score": round(axis_score, 3),
+        "mean_saturation": round(float(saturation.mean()), 3),
     }
 
 
@@ -225,6 +320,31 @@ def select_diverse_candidates(candidates: list[dict[str, Any]], limit: int = 10)
         selected.extend([candidate for candidate in candidates if id(candidate) not in seen][: limit - len(selected)])
     kind_order = {kind: idx for idx, kind in enumerate(quotas)}
     return sorted(selected[:limit], key=lambda item: (kind_order.get(item["kind"], 9), -item["score"]))
+
+
+def candidate_passes_structural_filter(candidate: dict[str, Any]) -> bool:
+    metrics = candidate["crop_metrics"]
+    kind = candidate["kind"]
+    if metrics["structural_score"] < 0.58:
+        return False
+    organic_limit = {
+        "opening_or_shadow_region": 0.46,
+        "vertical_repeat": 0.30,
+        "horizontal_band": 0.34,
+        "upper_edge_or_roofline": 0.42,
+    }.get(kind, 0.34)
+    if metrics["organic_ratio"] > organic_limit:
+        return False
+    x1, y1, x2, y2 = candidate["bbox_normalized"]
+    width = x2 - x1
+    height = y2 - y1
+    if width < 0.018 or height < 0.025:
+        return False
+    if kind == "vertical_repeat" and width > 0.18:
+        return False
+    if kind == "opening_or_shadow_region" and (height < 0.08 or width < 0.035):
+        return False
+    return True
 
 
 def write_candidate_crop(candidate: dict[str, Any], crop_path: Path) -> None:
