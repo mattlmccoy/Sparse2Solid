@@ -1,6 +1,8 @@
 from pathlib import Path
 from io import BytesIO
 
+from PIL import Image, ImageDraw
+
 from sparse2solid.assembly import build_from_spec, write_project
 from sparse2solid.connectivity import structural_connectivity
 from sparse2solid.gui import create_app
@@ -9,6 +11,24 @@ from sparse2solid.reference_planner import plan_reference_set
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def sample_facade_image() -> BytesIO:
+    image = Image.new("RGB", (1200, 720), (236, 232, 224))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((80, 190, 1120, 620), fill=(248, 246, 238), outline=(110, 104, 96), width=5)
+    draw.polygon([(70, 190), (600, 70), (1130, 190)], fill=(156, 77, 45), outline=(92, 48, 34))
+    for idx in range(9):
+        x = 150 + idx * 110
+        draw.rectangle((x, 260, x + 58, 560), fill=(86, 115, 130), outline=(60, 70, 76), width=3)
+        draw.line((x + 29, 260, x + 29, 560), fill=(248, 246, 238), width=4)
+        draw.line((x, 395, x + 58, 395), fill=(248, 246, 238), width=4)
+        draw.line((x - 18, 205, x - 18, 620), fill=(142, 136, 126), width=6)
+    draw.rectangle((60, 620, 1140, 660), fill=(150, 146, 138))
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=92)
+    buf.seek(0)
+    return buf
 
 
 def test_reference_plan_explains_sparse_capture():
@@ -53,7 +73,7 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
 
     upload = client.post(
         f"/api/projects/{slug}/images",
-        data={"images": (BytesIO(b"fake image bytes"), "front-view.jpg")},
+        data={"images": (sample_facade_image(), "front-view.jpg")},
         content_type="multipart/form-data",
     )
     assert upload.status_code == 200
@@ -68,7 +88,10 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     discovered = client.post(f"/api/projects/{slug}/components")
     assert discovered.status_code == 200
     component_plan = discovered.get_json()["component_plan"]
-    assert any(component["component"] == "facade_bay" for component in component_plan["components"])
+    assert component_plan["analyzable_image_count"] == 1
+    assert component_plan["image_analysis"]["summary"]["average_facade_rhythm"] > 0
+    assert any(component["component"] == "primary_massing" for component in component_plan["components"])
+    assert any(component["component"] == "repeated_vertical_module" for component in component_plan["components"])
 
     units = client.post(f"/api/projects/{slug}/build-units")
     assert units.status_code == 200
@@ -79,5 +102,7 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     assembled = client.post(f"/api/projects/{slug}/assemble")
     assert assembled.status_code == 200
     report = assembled.get_json()["report"]
+    assert report["source"] == "uploaded_images_and_component_plan"
+    assert report["outputs"]["obj"]["url"].endswith(".obj")
     assert report["connectivity"]["grounded"]
     assert report["orbit"]["contact_sheet"]["url"].endswith("contact_sheet.jpg")

@@ -199,11 +199,13 @@ The GUI guides a new user through:
 
 - creating a project,
 - uploading sparse 2D reference images,
+- writing an image analysis report and contact sheet from those exact uploads,
 - generating a missing-view capture plan,
-- identifying likely reusable geometry units,
+- identifying likely reusable geometry units with evidence-based confidence,
 - building per-unit OBJ/MTL drafts and orbit QA sheets,
 - assembling the current unit drafts into a full model preview,
-- opening OBJ/MTL/report outputs.
+- previewing OBJ outputs directly in the browser,
+- opening OBJ/MTL/report outputs when needed.
 
 The current GUI is local-first. Uploaded images stay in the local `projects/` folder.
 
@@ -214,6 +216,17 @@ project -> images -> coverage plan -> unit discovery -> unit drafts -> assembly 
 ```
 
 This is intentionally different from one-shot reconstruction. The app should identify the important unique/repeated units first, ask for more images when a unit is underconstrained, and only then assemble the full structure.
+
+### Generalization Guardrails
+
+Sparse2Solid should not silently reuse an old template model for a new building. The Studio now follows these rules:
+
+- Uploading new images marks prior analysis, unit plans, and model outputs as stale in the project manifest.
+- Unit confidence is computed from the current uploaded images; it is not a fixed demo percentage.
+- The image contact sheet is shown beside the project so users can verify which photos are being analyzed.
+- Unit drafts and assembly previews are generated into the active project folder under `projects/<slug>/outputs/`.
+- Browser OBJ preview is available for unit drafts and assembly outputs without downloading files first.
+- If no units are confidently drafted, the Studio refuses to assemble a misleading full model.
 
 On macOS, you can also double-click:
 

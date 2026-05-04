@@ -6,12 +6,12 @@ These are the stable interfaces the pipeline is moving toward.
 
 ```json
 {
-  "model_id": "classical_facade_demo",
+  "model_id": "example_building",
   "scale_notes": "Known measured width or other scale source.",
   "placements": [
     {
-      "id": "front_bay_01",
-      "component": "facade_bay",
+      "id": "front_repeat_01",
+      "component": "repeated_vertical_module",
       "translate": [-3.6, 0.0, 0.0],
       "scale": [1.0, 1.0, 1.0],
       "rotate_z_deg": 0.0
@@ -26,6 +26,7 @@ These are the stable interfaces the pipeline is moving toward.
 projects/<slug>/
   project.json
   images/
+  analysis/
   reference_plan.json
   components/
   outputs/
@@ -50,19 +51,43 @@ projects/<slug>/
 }
 ```
 
+`analysis/image_analysis.json` stores lightweight measurements from the uploaded images:
+
+```json
+{
+  "summary": {
+    "image_count": 12,
+    "analyzable_count": 12,
+    "average_aspect_ratio": 1.62,
+    "average_quality": 0.73,
+    "average_facade_rhythm": 0.68,
+    "average_roofline": 0.52,
+    "view_diversity_score": 0.7
+  },
+  "images": []
+}
+```
+
+`analysis/image_contact_sheet.jpg` is a local visual proof that the current project is using the user's uploaded images.
+
 ## Component Plan
 
 ```json
 {
   "strategy": "unit_first_reconstruction",
+  "image_count": 12,
+  "analyzable_image_count": 12,
+  "image_analysis": {},
   "components": [
     {
-      "component": "facade_bay",
-      "label": "Facade bay / repeated wall opening",
+      "component": "repeated_vertical_module",
+      "label": "Repeated facade / porch module",
       "confidence": 0.72,
       "status": "ready_for_unit_draft",
-      "needs": ["straight-on front elevation", "one closeup", "one oblique"],
-      "output_folder": "outputs/units/facade_bay"
+      "evidence": ["12 analyzable image(s)", "facade rhythm score 0.68"],
+      "matched_images": [],
+      "needs": ["straight-on elevation", "one representative closeup", "oblique view showing module depth"],
+      "output_folder": "outputs/units/repeated_vertical_module"
     }
   ],
   "ignored_by_default": [
@@ -78,12 +103,12 @@ projects/<slug>/
 
 ```json
 {
-  "name": "facade_bay",
-  "purpose": "repeatable arched facade bay",
+  "name": "repeated_vertical_module",
+  "purpose": "repeatable facade, porch, window, column, or support rhythm",
   "parts": [
     {
-      "name": "applied_arch_ring_07",
-      "material": "limestone",
+      "name": "vertical_repeat_00",
+      "material": "primary_wall",
       "geometry": "mesh"
     }
   ]

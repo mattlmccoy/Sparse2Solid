@@ -40,17 +40,14 @@ An image that proves a missing side depth is more useful than ten redundant fron
 
 ### 2. Unit Discovery
 
-The building is decomposed into units:
+The building is decomposed into reusable or high-impact units. The exact labels depend on the uploaded images, but common categories include:
 
-- facade bay,
-- lamp,
-- column,
-- stair/terrace,
-- parapet segment,
-- roof cap,
-- awning,
-- side pavilion,
-- window grille.
+- primary massing,
+- repeated facade or porch modules,
+- roofline/cornice/upper silhouette systems,
+- openings such as windows and doors,
+- columns, posts, stairs, railings, and freestanding details,
+- site details only when they are permanent and well-supported by images.
 
 These units become testable geometry files. Each unit can be rendered, inspected, revised, and reused.
 
@@ -60,10 +57,10 @@ The current public implementation uses procedural geometry because it is clean, 
 
 ```json
 {
-  "component": "facade_bay",
-  "groups": ["wall_panel", "applied_arch_ring", "column", "glass", "entablature"],
-  "evidence": ["front_hero", "detail_closeup", "left_oblique"],
-  "confidence": "reviewed"
+  "component": "repeated_vertical_module",
+  "groups": ["module_backing_plane", "vertical_repeat_00", "module_shadow_opening"],
+  "evidence": ["front elevation", "right oblique", "detail closeup"],
+  "confidence": 0.72
 }
 ```
 

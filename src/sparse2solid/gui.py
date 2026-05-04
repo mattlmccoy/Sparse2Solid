@@ -11,9 +11,9 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.datastructures import FileStorage
 
-from .assembly import COMPONENT_LIBRARY, write_project
-from .demo import DEFAULT_SPEC
-from .geometry import export_parts
+from .connectivity import structural_connectivity
+from .geometry import MeshPart, box_part, cylinder_part, export_parts
+from .image_analysis import write_analysis
 from .orbit import render_orbit_set
 from .reference_planner import plan_reference_set
 
@@ -22,28 +22,32 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic"}
 
 COMPONENT_HINTS = [
     {
-        "component": "facade_bay",
-        "label": "Facade bay / repeated wall opening",
-        "why": "Most architectural models are controlled by the repeating bay rhythm: arches, windows, doors, columns, and trim.",
-        "keywords": ["front", "facade", "arch", "door", "window", "elevation", "bay"],
-        "needs": ["straight-on front elevation", "one closeup of a representative bay", "left or right oblique showing depth"],
+        "component": "primary_massing",
+        "label": "Primary building massing",
+        "why": "Every project needs a coarse blockout for footprint, height, and main proportions before detailed units are trusted.",
+        "needs": ["one wide exterior image", "one known scale or approximate dimensions", "at least one image with roof and ground visible"],
         "priority": 1,
     },
     {
-        "component": "lamp",
-        "label": "Freestanding lamp or small repeated ornament",
-        "why": "Small repeated objects should be solved once as units, then instanced across the site.",
-        "keywords": ["lamp", "lamppost", "light", "globe", "detail"],
-        "needs": ["closeup with full height", "ground-contact view", "oblique view showing depth"],
+        "component": "repeated_vertical_module",
+        "label": "Repeated facade / porch module",
+        "why": "Long buildings often reduce to a repeated vertical rhythm: columns, windows, porch bays, doors, or balcony supports.",
+        "needs": ["straight-on elevation", "one representative closeup", "oblique view showing module depth"],
         "priority": 2,
     },
     {
-        "component": "upper_level_roof_awning",
-        "label": "Upper level, roof, awning, or canopy",
-        "why": "Roof geometry is often underconstrained from front photos and should be treated as its own unit.",
-        "keywords": ["roof", "awning", "parapet", "terrace", "upper", "side", "rear"],
-        "needs": ["roofline photo", "side or rear view", "oblique view showing where supports land"],
+        "component": "roofline_system",
+        "label": "Roofline / cornice / upper silhouette",
+        "why": "Rooflines are commonly wrong if solved from a front image only, so they stay separate until enough evidence exists.",
+        "needs": ["roofline image", "side or oblique image", "image showing roof overhang and end condition"],
         "priority": 3,
+    },
+    {
+        "component": "site_or_detail_unit",
+        "label": "Optional site/detail unit",
+        "why": "Small details are only reconstructed when the images contain enough evidence; trees, bushes, people, and temporary decor stay out by default.",
+        "needs": ["closeup of the object", "ground-contact or attachment view", "second angle if it is freestanding"],
+        "priority": 4,
     },
 ]
 
@@ -81,6 +85,13 @@ def event(manifest: dict[str, Any], message: str) -> None:
         },
     )
     manifest["events"] = manifest["events"][:20]
+
+
+def invalidate_derived_outputs(manifest: dict[str, Any], reason: str) -> None:
+    manifest.pop("reference_plan", None)
+    manifest.pop("component_plan", None)
+    manifest["outputs"] = {}
+    event(manifest, reason)
 
 
 def safe_project(root: Path, slug: str) -> Path:
@@ -127,24 +138,14 @@ def save_uploads(files: list[FileStorage], image_dir: Path) -> list[str]:
     return saved
 
 
-def keyword_score(records: list[dict[str, str]], keywords: list[str]) -> int:
-    text = " ".join(record["name"].lower() for record in records)
-    return sum(1 for keyword in keywords if keyword in text)
-
-
 def component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
-    images = image_records(project_dir)
+    image_paths = [project_dir / record["path"] for record in image_records(project_dir)]
+    analysis = write_analysis(project_dir, image_paths)
+    summary = analysis["summary"]
     planned = []
     for hint in COMPONENT_HINTS:
-        score = keyword_score(images, hint["keywords"])
-        broad_bonus = 1 if images and hint["component"] == "facade_bay" else 0
-        confidence = min(0.86, 0.24 + 0.14 * len(images) + 0.16 * score + 0.12 * broad_bonus)
-        status = "ready_for_unit_draft" if confidence >= 0.66 else "needs_more_images"
-        matched = [
-            record
-            for record in images
-            if any(keyword in record["name"].lower() for keyword in hint["keywords"])
-        ][:6]
+        confidence, evidence = component_confidence(hint["component"], summary)
+        status = "ready_for_unit_draft" if confidence >= 0.58 else "needs_more_images"
         planned.append(
             {
                 "component": hint["component"],
@@ -152,7 +153,8 @@ def component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any
                 "why": hint["why"],
                 "confidence": round(confidence, 2),
                 "status": status,
-                "matched_images": matched,
+                "evidence": evidence,
+                "matched_images": evidence_images(analysis, hint["component"]),
                 "needs": hint["needs"],
                 "priority": hint["priority"],
                 "output_folder": f"outputs/units/{hint['component']}",
@@ -166,12 +168,67 @@ def component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any
     ]
     return {
         "project": manifest.get("name") or project_dir.name,
-        "image_count": len(images),
+        "image_count": summary["image_count"],
+        "analyzable_image_count": summary["analyzable_count"],
         "strategy": "unit_first_reconstruction",
+        "image_analysis": analysis,
         "components": planned,
         "ignored_by_default": ignored,
         "next_step": "Build ready unit drafts, then request targeted images for low-confidence units before assembly.",
     }
+
+
+def component_confidence(component: str, summary: dict[str, Any]) -> tuple[float, list[str]]:
+    n = summary["analyzable_count"]
+    quality = summary["average_quality"]
+    diversity = summary["view_diversity_score"]
+    rhythm = summary["average_facade_rhythm"]
+    roofline = summary["average_roofline"]
+    wide = summary["wide_count"]
+    evidence: list[str] = []
+    if n:
+        evidence.append(f"{n} analyzable image(s)")
+    if wide:
+        evidence.append(f"{wide} wide/context image(s)")
+    if quality:
+        evidence.append(f"average image quality {quality:.2f}")
+    if component == "primary_massing":
+        confidence = min(0.94, 0.12 + n * 0.075 + quality * 0.30 + diversity * 0.22 + min(wide, 3) * 0.075)
+        evidence.append("uses image aspect ratios and broad edge structure")
+    elif component == "repeated_vertical_module":
+        confidence = min(0.92, 0.08 + n * 0.045 + rhythm * 0.50 + quality * 0.16)
+        evidence.append(f"facade rhythm score {rhythm:.2f}")
+    elif component == "roofline_system":
+        confidence = min(0.82, 0.08 + n * 0.045 + roofline * 0.46 + diversity * 0.14)
+        evidence.append(f"roofline/horizontal edge score {roofline:.2f}")
+    else:
+        confidence = min(0.54, 0.04 + n * 0.012 + quality * 0.14)
+        evidence.append("details require explicit closeups or user promotion before drafting")
+    if not n:
+        evidence.append("no valid image pixels could be analyzed")
+    return max(0.0, confidence), evidence
+
+
+def evidence_images(analysis: dict[str, Any], component: str) -> list[dict[str, Any]]:
+    images = [item for item in analysis["images"] if item.get("analyzable")]
+    if component == "repeated_vertical_module":
+        images = sorted(images, key=lambda item: item.get("facade_rhythm_score", 0), reverse=True)
+    elif component == "roofline_system":
+        images = sorted(images, key=lambda item: item.get("roofline_score", 0), reverse=True)
+    elif component == "primary_massing":
+        images = sorted(images, key=lambda item: (item.get("aspect_ratio", 0), item.get("image_quality_score", 0)), reverse=True)
+    else:
+        images = sorted(images, key=lambda item: item.get("image_quality_score", 0), reverse=True)
+    return [
+        {
+            "name": item["name"],
+            "aspect_ratio": item.get("aspect_ratio"),
+            "facade_rhythm_score": item.get("facade_rhythm_score"),
+            "roofline_score": item.get("roofline_score"),
+            "quality": item.get("image_quality_score"),
+        }
+        for item in images[:6]
+    ]
 
 
 def write_component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -195,22 +252,21 @@ def build_unit_outputs(project_dir: Path, manifest: dict[str, Any]) -> dict[str,
         if component["status"] != "ready_for_unit_draft":
             units.append({**component, "built": False, "reason": "Needs more targeted images before a useful unit draft."})
             continue
-        factory = COMPONENT_LIBRARY.get(component["component"])
-        if not factory:
-            units.append({**component, "built": False, "reason": "No component generator exists yet."})
+        parts = generic_unit_parts(component, plan.get("image_analysis", {}).get("summary", {}))
+        if not parts:
+            units.append({**component, "built": False, "reason": "No generic component generator exists yet."})
             continue
-        unit = factory()
         out_dir = project_dir / "outputs" / "units" / component["component"]
-        outputs = export_parts(out_dir, component["component"], list(unit.parts))
+        outputs = export_parts(out_dir, component["component"], parts)
         orbit = render_orbit_set(Path(outputs["obj"]), Path(outputs["mtl"]), out_dir / "orbits", title=f"{component['label']} unit orbit", frame_count=8)
         units.append(
             {
                 **component,
                 "built": True,
-                "purpose": unit.purpose,
+                "purpose": "Generic image-conditioned draft unit; refine after user review and targeted references.",
                 "outputs": relativize_report(project_dir, outputs),
                 "orbit": relativize_report(project_dir, orbit),
-                "part_count": len(unit.parts),
+                "part_count": len(parts),
             }
         )
     report = {
@@ -225,6 +281,104 @@ def build_unit_outputs(project_dir: Path, manifest: dict[str, Any]) -> dict[str,
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     manifest.setdefault("outputs", {})["units"] = relativize_report(project_dir, {**report, "report": str(report_path)})
     return manifest["outputs"]["units"]
+
+
+def generic_unit_parts(component: dict[str, Any], summary: dict[str, Any]) -> list[MeshPart]:
+    aspect = max(1.2, min(6.0, float(summary.get("average_aspect_ratio") or 2.2)))
+    rhythm = max(2, min(18, int(round(float(summary.get("average_vertical_peaks") or 5)))))
+    key = component["component"]
+    if key == "primary_massing":
+        width = 4.0 + aspect * 2.2
+        height = 2.6 + min(2.2, float(summary.get("average_roofline") or 0.3) * 1.7)
+        depth = 1.6 + float(summary.get("view_diversity_score") or 0.2) * 2.6
+        return [
+            box_part("image_conditioned_main_volume", "limestone", (width, depth, height), (0, 0, height / 2)),
+            box_part("front_shadow_plane_from_photo_edges", "shadow", (width * 0.92, 0.08, height * 0.62), (0, -depth / 2 - 0.05, height * 0.43)),
+            box_part("ground_reference_slab", "stone", (width + 0.8, depth + 0.8, 0.14), (0, 0, 0.07)),
+        ]
+    if key == "repeated_vertical_module":
+        parts: list[MeshPart] = [box_part("module_backing_plane", "limestone", (2.4, 0.18, 2.8), (0, 0, 1.4))]
+        count = max(2, min(5, rhythm // 3))
+        for idx, x in enumerate(np_linspace(-0.95, 0.95, count)):
+            parts.append(cylinder_part(f"vertical_repeat_{idx:02d}", "limestone", 0.055, 2.5, (x, -0.16, 1.28), 16))
+        parts.extend(
+            [
+                box_part("module_lower_rail", "stone", (2.55, 0.26, 0.18), (0, -0.08, 0.15)),
+                box_part("module_upper_rail", "limestone", (2.55, 0.22, 0.18), (0, -0.08, 2.72)),
+                box_part("module_shadow_opening", "shadow", (1.75, 0.08, 1.85), (0, -0.18, 1.36)),
+            ]
+        )
+        return parts
+    if key == "roofline_system":
+        width = 5.4 + aspect
+        return [
+            box_part("cornice_band_from_horizontal_edges", "limestone", (width, 0.34, 0.26), (0, 0, 0.25)),
+            box_part("roof_plane_low_confidence", "roof", (width * 1.04, 2.0, 0.18), (0, 0.18, 0.72)),
+            box_part("ridge_or_parapet_placeholder", "roof", (width * 0.94, 0.16, 0.18), (0, 0.05, 1.05)),
+        ]
+    if key == "site_or_detail_unit":
+        return [
+            box_part("detail_ground_pad", "stone", (0.8, 0.8, 0.16), (0, 0, 0.08)),
+            cylinder_part("generic_detail_vertical_axis", "accent", 0.07, 1.6, (0, 0, 0.88), 18),
+            box_part("detail_attachment_marker", "accent", (0.35, 0.18, 0.18), (0, -0.02, 1.74)),
+        ]
+    return []
+
+
+def np_linspace(start: float, stop: float, count: int) -> list[float]:
+    if count <= 1:
+        return [(start + stop) / 2]
+    step = (stop - start) / (count - 1)
+    return [start + step * idx for idx in range(count)]
+
+
+def build_assembly_preview(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    units = manifest.get("outputs", {}).get("units", {}).get("units", [])
+    analysis = {}
+    component_path = project_dir / str(manifest.get("component_plan", "components/component_plan.json"))
+    if component_path.exists():
+        analysis = json.loads(component_path.read_text(encoding="utf-8")).get("image_analysis", {})
+    summary = analysis.get("summary", {})
+    width = 8.0 + float(summary.get("average_aspect_ratio") or 2.0) * 2.0
+    parts = [
+        box_part("assembly_ground_slab", "stone", (width + 1.0, 4.2, 0.16), (0, 0, 0.08)),
+    ]
+    x = -width / 2 + 1.2
+    for unit in units:
+        if not unit.get("built"):
+            continue
+        unit_parts = generic_unit_parts(unit, summary)
+        if unit["component"] == "primary_massing":
+            parts.extend([part.transformed(name_prefix="assembly_primary__", translate=(0, 0, 0.12)) for part in unit_parts])
+        elif unit["component"] == "repeated_vertical_module":
+            bay_count = max(3, min(12, int(round(float(summary.get("average_vertical_peaks") or 6) / 2))))
+            spacing = width / max(1, bay_count)
+            for idx in range(bay_count):
+                px = -width / 2 + spacing * (idx + 0.5)
+                parts.extend([part.transformed(name_prefix=f"assembly_repeat_{idx:02d}__", translate=(px, -2.1, 0.16), scale=(0.72, 1, 1)) for part in unit_parts])
+        elif unit["component"] == "roofline_system":
+            parts.extend([part.transformed(name_prefix="assembly_roofline__", translate=(0, 0, 3.25), scale=(1.35, 1, 1)) for part in unit_parts])
+        else:
+            parts.extend([part.transformed(name_prefix=f"assembly_detail_{unit['component']}__", translate=(x, -2.55, 0.14)) for part in unit_parts])
+            x += 1.2
+    out_dir = project_dir / "outputs" / "assembly"
+    outputs = export_parts(out_dir, "image_conditioned_assembly_preview", parts)
+    connectivity = structural_connectivity(parts, tolerance=0.08)
+    report = {
+        "model_id": "image_conditioned_assembly_preview",
+        "source": "uploaded_images_and_component_plan",
+        "outputs": outputs,
+        "part_count": len(parts),
+        "connectivity": connectivity.__dict__,
+        "notes": [
+            "This is an image-conditioned assembly preview derived from uploaded image analysis and unit candidates.",
+            "It is not a final reconstruction. Low-confidence units should request more images before detail work.",
+        ],
+    }
+    report_path = out_dir / "image_conditioned_assembly_preview_report.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report["outputs"]["report"] = str(report_path)
+    return report
 
 
 def create_app(workspace: Path | None = None) -> Flask:
@@ -269,6 +423,10 @@ def create_app(workspace: Path | None = None) -> Flask:
             return jsonify({"error": "unknown project"}), 404
         manifest = project_manifest(project_dir)
         manifest["images"] = image_records(project_dir)
+        if (project_dir / "analysis" / "image_analysis.json").exists():
+            manifest["image_analysis_url"] = f"/api/projects/{project_dir.name}/files/analysis/image_analysis.json"
+            manifest["image_contact_sheet_url"] = f"/api/projects/{project_dir.name}/files/analysis/image_contact_sheet.jpg"
+            manifest["image_analysis_data"] = json.loads((project_dir / "analysis" / "image_analysis.json").read_text(encoding="utf-8"))
         manifest["reference_plan_url"] = f"/api/projects/{project_dir.name}/files/reference_plan.json" if (project_dir / "reference_plan.json").exists() else None
         if (project_dir / "reference_plan.json").exists():
             manifest["reference_plan_data"] = json.loads((project_dir / "reference_plan.json").read_text(encoding="utf-8"))
@@ -284,7 +442,10 @@ def create_app(workspace: Path | None = None) -> Flask:
         files = request.files.getlist("images")
         saved = save_uploads(files, project_dir / "images")
         manifest["images"] = image_records(project_dir)
-        event(manifest, f"Uploaded {len(saved)} image(s).")
+        if saved:
+            invalidate_derived_outputs(manifest, f"Uploaded {len(saved)} image(s); previous analysis and model outputs were marked stale.")
+        else:
+            event(manifest, "No supported image files were uploaded.")
         write_manifest(project_dir, manifest)
         return jsonify({"saved": saved, "project": manifest})
 
@@ -293,6 +454,7 @@ def create_app(workspace: Path | None = None) -> Flask:
         project_dir = safe_project(project_root, slug)
         manifest = project_manifest(project_dir)
         images = [str(project_dir / record["path"]) for record in image_records(project_dir)]
+        write_analysis(project_dir, [project_dir / record["path"] for record in image_records(project_dir)])
         plan = plan_reference_set(manifest.get("name") or slug, images)
         plan_path = project_dir / "reference_plan.json"
         plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
@@ -325,12 +487,13 @@ def create_app(workspace: Path | None = None) -> Flask:
         manifest = project_manifest(project_dir)
         if not manifest.get("outputs", {}).get("units"):
             return jsonify({"error": "Build unit drafts before assembling the full structure."}), 400
-        out_dir = project_dir / "outputs" / "assembly"
-        report = write_project(DEFAULT_SPEC, out_dir)
+        if not manifest.get("outputs", {}).get("units", {}).get("built_count"):
+            return jsonify({"error": "No units were confidently drafted yet. Add more targeted images before assembly."}), 400
+        report = build_assembly_preview(project_dir, manifest)
         orbit_report = render_orbit_set(
             obj_path=Path(report["outputs"]["obj"]),
             mtl_path=Path(report["outputs"]["mtl"]),
-            out_dir=out_dir / "orbits",
+            out_dir=project_dir / "outputs" / "assembly" / "orbits",
             title=f"{manifest.get('name', slug)} assembly orbit",
         )
         report["orbit"] = orbit_report
@@ -350,9 +513,8 @@ def create_app(workspace: Path | None = None) -> Flask:
             report = build_unit_outputs(project_dir, manifest)
             event(manifest, f"Built {report['built_count']} unit draft(s).")
         write_manifest(project_dir, manifest)
-        out_dir = project_dir / "outputs" / "assembly"
-        report = write_project(DEFAULT_SPEC, out_dir)
-        orbit_report = render_orbit_set(Path(report["outputs"]["obj"]), Path(report["outputs"]["mtl"]), out_dir / "orbits", title=f"{manifest.get('name', slug)} assembly orbit")
+        report = build_assembly_preview(project_dir, manifest)
+        orbit_report = render_orbit_set(Path(report["outputs"]["obj"]), Path(report["outputs"]["mtl"]), project_dir / "outputs" / "assembly" / "orbits", title=f"{manifest.get('name', slug)} assembly orbit")
         report["orbit"] = orbit_report
         manifest.setdefault("outputs", {})["assembly"] = relativize_report(project_dir, report)
         event(manifest, "Ran the full guided demo: units first, then assembly.")
@@ -646,6 +808,16 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line);
       background: white;
     }
+    .obj-viewer {
+      width: 100%;
+      min-height: 320px;
+      border-radius: 22px;
+      border: 1px solid rgba(68,64,60,.16);
+      background:
+        radial-gradient(circle at 20% 18%, rgba(6,182,212,.14), transparent 30%),
+        linear-gradient(135deg, #fbfaf7, #ded3c6);
+      margin-top: 12px;
+    }
     .events { display: grid; gap: 8px; }
     .event {
       padding: 10px 12px;
@@ -731,7 +903,7 @@ INDEX_HTML = r"""<!doctype html>
         <h3>Start Here</h3>
         <div class="field">
           <label for="projectName">Building or object name</label>
-          <input id="projectName" type="text" placeholder="Prospect Park Boathouse" />
+          <input id="projectName" type="text" placeholder="The Grand Hotel" />
         </div>
         <button class="blue" id="createProject">Create Project</button>
       </section>
@@ -771,6 +943,7 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
           <div id="thumbs" class="thumbs"></div>
+          <div id="imageAnalysis" class="preview" style="margin-top:16px;"></div>
         </article>
         <article class="card">
           <h3>2. Check Image Coverage</h3>
@@ -780,7 +953,7 @@ INDEX_HTML = r"""<!doctype html>
         </article>
         <article class="card">
           <h3>3. Discover Geometry Units</h3>
-          <p>The next pass identifies likely reusable units: facade bays, lamps, roofs, awnings, stairs, side pavilions, and other repeated elements. Trees and temporary objects stay ignored unless promoted.</p>
+          <p>The next pass looks at your uploaded images and proposes reusable units: the main mass, repeated facade rhythms, roofline systems, and any details that have enough evidence. Context like trees and crowds stays ignored unless promoted.</p>
           <button id="componentsBtn" class="blue">Identify Units</button>
           <div id="componentSummary" class="unit-list"></div>
         </article>
@@ -873,6 +1046,15 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderProject(project) {
       $("thumbs").innerHTML = project.images.map(image => `<div class="thumb"><img src="${image.url}" alt="${image.name}"></div>`).join("");
+      if (project.image_analysis_data) {
+        const s = project.image_analysis_data.summary;
+        $("imageAnalysis").innerHTML = `
+          <p class="small"><strong>Image analysis:</strong> ${s.analyzable_count}/${s.image_count} analyzable · rhythm ${s.average_facade_rhythm} · roofline ${s.average_roofline} · diversity ${s.view_diversity_score}</p>
+          ${project.image_contact_sheet_url ? `<img src="${project.image_contact_sheet_url}" alt="Uploaded image contact sheet">` : ""}
+        `;
+      } else {
+        $("imageAnalysis").innerHTML = `<p class="small">Image analysis will appear after checking coverage or identifying units.</p>`;
+      }
       $("projectStats").innerHTML = `
         <p><strong>Slug:</strong> ${project.slug}</p>
         <p><strong>Images:</strong> ${project.images.length}</p>
@@ -883,6 +1065,7 @@ INDEX_HTML = r"""<!doctype html>
       $("folderMap").innerHTML = `
         <div>projects/${project.slug}/</div>
         <div>  images/ <span class="small">uploaded references</span></div>
+        <div>  analysis/ <span class="small">image metrics + contact sheet from your photos</span></div>
         <div>  reference_plan.json <span class="small">missing-view checklist</span></div>
         <div>  components/component_plan.json <span class="small">unit candidates</span></div>
         <div>  outputs/units/ <span class="small">per-unit OBJ/MTL/orbits</span></div>
@@ -950,6 +1133,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="confidence ${component.confidence < .66 ? "low" : ""}">${Math.round(component.confidence * 100)}%</div>
           </div>
           <p class="small"><strong>Status:</strong> ${component.status.replaceAll("_", " ")}</p>
+          <p class="small"><strong>Evidence:</strong> ${(component.evidence || []).join(" · ")}</p>
           <ul class="needs">${component.needs.map(need => `<li>${need}</li>`).join("")}</ul>
         </div>
       `).join("");
@@ -963,7 +1147,7 @@ INDEX_HTML = r"""<!doctype html>
             <div><strong>${unit.label}</strong><br><span class="small">${unit.built ? `${unit.part_count} named parts drafted` : unit.reason}</span></div>
             <div class="confidence ${unit.built ? "" : "low"}">${unit.built ? "Drafted" : "Needs views"}</div>
           </div>
-          ${unit.built ? `<p><a href="${unit.outputs.obj.url}" target="_blank">OBJ</a> · <a href="${unit.outputs.mtl.url}" target="_blank">MTL</a> · <a href="${unit.orbit.contact_sheet.url}" target="_blank">Orbit sheet</a></p>` : ""}
+          ${unit.built ? `<p><a href="${unit.outputs.obj.url}" target="_blank">OBJ</a> · <a href="${unit.outputs.mtl.url}" target="_blank">MTL</a> · <a href="${unit.orbit.contact_sheet.url}" target="_blank">Orbit sheet</a> · <button class="secondary" onclick="viewObj('${unit.outputs.obj.url}', 'unit-viewer-${unit.component}')">View OBJ</button></p><canvas class="obj-viewer" id="unit-viewer-${unit.component}"></canvas>` : ""}
         </div>
       `).join("");
     }
@@ -973,10 +1157,85 @@ INDEX_HTML = r"""<!doctype html>
       const mtl = report.outputs.mtl;
       const contact = report.orbit.contact_sheet;
       $("assemblyOutputs").innerHTML = `
-        <p><a href="${obj.url}" target="_blank">OBJ</a> · <a href="${mtl.url}" target="_blank">MTL</a> · <a href="${report.outputs.report.url}" target="_blank">Report</a></p>
+        <p><a href="${obj.url}" target="_blank">OBJ</a> · <a href="${mtl.url}" target="_blank">MTL</a> · <a href="${report.outputs.report.url}" target="_blank">Report</a> · <button class="secondary" onclick="viewObj('${obj.url}', 'assemblyObjCanvas')">View OBJ</button></p>
         <p class="small">Connectivity: ${report.connectivity.grounded ? "grounded" : "floating pieces found"} · ${report.part_count} named parts</p>
+        <canvas class="obj-viewer" id="assemblyObjCanvas"></canvas>
         <div class="preview"><img src="${contact.url}" alt="Assembly orbit contact sheet"></div>
       `;
+      viewObj(obj.url, "assemblyObjCanvas");
+    }
+
+    async function viewObj(url, canvasId) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const text = await fetch(url).then(r => r.text());
+      const mesh = parseObj(text);
+      drawObj(mesh, canvas, 0.74);
+    }
+
+    function parseObj(text) {
+      const vertices = [[0,0,0]];
+      const faces = [];
+      for (const raw of text.split(/\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const parts = line.split(/\s+/);
+        if (parts[0] === "v") vertices.push(parts.slice(1,4).map(Number));
+        if (parts[0] === "f") {
+          const ids = parts.slice(1).map(part => parseInt(part.split("/")[0], 10));
+          for (let i = 1; i < ids.length - 1; i++) faces.push([ids[0], ids[i], ids[i + 1]]);
+        }
+      }
+      return {vertices, faces};
+    }
+
+    function drawObj(mesh, canvas, angle) {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(420, rect.width) * ratio;
+      canvas.height = Math.max(320, rect.height) * ratio;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(ratio, ratio);
+      const width = canvas.width / ratio;
+      const height = canvas.height / ratio;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(255,255,255,.32)";
+      ctx.fillRect(0, 0, width, height);
+      const verts = mesh.vertices.slice(1);
+      if (!verts.length) return;
+      const xs = verts.map(v => v[0]), ys = verts.map(v => v[1]), zs = verts.map(v => v[2]);
+      const center = [(Math.min(...xs)+Math.max(...xs))/2, (Math.min(...ys)+Math.max(...ys))/2, (Math.min(...zs)+Math.max(...zs))/2];
+      const span = Math.max(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys), Math.max(...zs)-Math.min(...zs), 1);
+      const scale = Math.min(width, height) * 0.62 / span;
+      const ca = Math.cos(angle), sa = Math.sin(angle);
+      const projected = mesh.vertices.map(v => {
+        const x = v[0] - center[0], y = v[1] - center[1], z = v[2] - center[2];
+        const rx = x * ca - y * sa;
+        const ry = x * sa + y * ca;
+        return [width/2 + rx * scale, height/2 + (z * -0.86 + ry * 0.26) * scale, ry];
+      });
+      const renderFaces = mesh.faces.map((face, idx) => {
+        const d = (projected[face[0]][2] + projected[face[1]][2] + projected[face[2]][2]) / 3;
+        return {face, idx, d};
+      }).sort((a,b) => a.d - b.d).slice(0, 9000);
+      for (const item of renderFaces) {
+        const pts = item.face.map(id => projected[id]);
+        const shade = 190 + (item.idx % 37);
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        ctx.lineTo(pts[1][0], pts[1][1]);
+        ctx.lineTo(pts[2][0], pts[2][1]);
+        ctx.closePath();
+        ctx.fillStyle = `rgb(${shade}, ${Math.max(130, shade-18)}, ${Math.max(110, shade-35)})`;
+        ctx.fill();
+        if (item.idx % 4 === 0) {
+          ctx.strokeStyle = "rgba(28,25,23,.18)";
+          ctx.stroke();
+        }
+      }
+      ctx.fillStyle = "rgba(28,25,23,.70)";
+      ctx.font = "12px SF Pro Text, system-ui";
+      ctx.fillText(`${mesh.faces.length.toLocaleString()} faces · browser OBJ preview`, 16, 24);
     }
 
     $("createProject").addEventListener("click", async () => {
