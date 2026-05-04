@@ -1,7 +1,9 @@
 from pathlib import Path
+from io import BytesIO
 
 from sparse2solid.assembly import build_from_spec, write_project
 from sparse2solid.connectivity import structural_connectivity
+from sparse2solid.gui import create_app
 from sparse2solid.orbit import parse_obj, render_orbit_set
 from sparse2solid.reference_planner import plan_reference_set
 
@@ -39,3 +41,32 @@ def test_project_exports_obj_and_orbit(tmp_path):
     assert len(faces) > 100
     orbit = render_orbit_set(obj, mtl, tmp_path / "orbits", frame_count=4)
     assert Path(orbit["contact_sheet"]).exists()
+
+
+def test_gui_guides_project_upload_plan_and_build(tmp_path):
+    app = create_app(tmp_path / "workspace")
+    client = app.test_client()
+
+    created = client.post("/api/projects", json={"name": "Test Building"})
+    assert created.status_code == 200
+    slug = created.get_json()["slug"]
+
+    upload = client.post(
+        f"/api/projects/{slug}/images",
+        data={"images": (BytesIO(b"fake image bytes"), "front-view.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert upload.status_code == 200
+    assert upload.get_json()["saved"] == ["front-view.jpg"]
+
+    planned = client.post(f"/api/projects/{slug}/plan")
+    assert planned.status_code == 200
+    plan = planned.get_json()["plan"]
+    assert plan["available_images"]
+    assert any(item["view"] == "hero_front" for item in plan["checklist"])
+
+    built = client.post(f"/api/projects/{slug}/build-demo")
+    assert built.status_code == 200
+    report = built.get_json()["report"]
+    assert report["connectivity"]["grounded"]
+    assert report["orbit"]["contact_sheet"]["url"].endswith("contact_sheet.jpg")

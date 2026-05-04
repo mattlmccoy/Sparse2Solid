@@ -176,8 +176,46 @@ This catches details that are technically present in the OBJ but are visually/ph
 
 ## Quick Start
 
+### Local GUI
+
+Most users should start with the browser studio:
+
 ```bash
-git clone https://github.com/YOUR_USER/Sparse2Solid.git
+git clone https://github.com/mattlmccoy/Sparse2Solid.git
+cd Sparse2Solid
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+python scripts/run_gui.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The GUI guides a new user through:
+
+- creating a project,
+- uploading sparse 2D reference images,
+- generating a missing-view capture plan,
+- building the starter semantic model,
+- rendering orbit QA contact sheets,
+- opening OBJ/MTL/report outputs.
+
+The current GUI is local-first. Uploaded images stay in the local `projects/` folder.
+
+On macOS, you can also double-click:
+
+```text
+Launch Sparse2Solid Studio.command
+```
+
+### Command Line
+
+```bash
+git clone https://github.com/mattlmccoy/Sparse2Solid.git
 cd Sparse2Solid
 python3 -m venv .venv
 source .venv/bin/activate
@@ -215,6 +253,7 @@ The public repo intentionally does not include private venue photos or fabricati
 ## Roadmap
 
 - Browser-based review UI for selecting OBJ groups and attaching feedback
+- More guided GUI steps for real image-conditioned component generation
 - More component templates: roofs, dormers, columns, railings, stairs, lamps
 - Guided annotation schema for turning user notes into unit revisions
 - Optional AI-assisted novel-view planning, with strict synthetic/real provenance

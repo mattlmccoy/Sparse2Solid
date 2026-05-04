@@ -20,6 +20,35 @@ These are the stable interfaces the pipeline is moving toward.
 }
 ```
 
+## GUI Project Workspace
+
+```text
+projects/<slug>/
+  project.json
+  images/
+  reference_plan.json
+  outputs/
+```
+
+`project.json` stores:
+
+```json
+{
+  "slug": "my-building",
+  "name": "My Building",
+  "created_at": "2026-05-03T12:00:00",
+  "images": [
+    {
+      "name": "front-view.jpg",
+      "path": "images/front-view.jpg",
+      "url": "/api/projects/my-building/files/images/front-view.jpg"
+    }
+  ],
+  "outputs": {},
+  "events": []
+}
+```
+
 ## Component
 
 ```json

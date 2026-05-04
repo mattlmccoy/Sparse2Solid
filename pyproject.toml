@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Matthew McCoy" }]
 dependencies = [
+  "flask>=3.0",
   "numpy>=1.24",
   "pillow>=10.0"
 ]
@@ -23,6 +24,7 @@ dev = ["pytest>=8.0"]
 sparse2solid-plan = "sparse2solid.reference_planner:main"
 sparse2solid-demo = "sparse2solid.demo:main"
 sparse2solid-orbit = "sparse2solid.orbit:main"
+sparse2solid-gui = "sparse2solid.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
