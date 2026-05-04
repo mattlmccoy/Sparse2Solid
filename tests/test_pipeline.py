@@ -90,11 +90,10 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     component_plan = discovered.get_json()["component_plan"]
     assert component_plan["analyzable_image_count"] == 1
     assert component_plan["image_analysis"]["summary"]["average_facade_rhythm"] > 0
-    names = {component["component"] for component in component_plan["components"]}
-    assert "primary_massing_blockout" in names
-    assert "vertical_support_unit" in names
-    assert "opening_unit" in names
-    assert "cornice_trim_unit" in names
+    assert component_plan["strategy"] == "pixel_evidence_unit_discovery"
+    assert any(component["component"].startswith("visual_unit_") for component in component_plan["components"])
+    assert any(component.get("crop_path") for component in component_plan["components"])
+    assert any(component.get("kind") == "opening_or_shadow_region" for component in component_plan["components"])
 
     units = client.post(f"/api/projects/{slug}/build-units")
     assert units.status_code == 200

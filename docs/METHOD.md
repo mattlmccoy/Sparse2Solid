@@ -57,9 +57,9 @@ The current public implementation uses procedural geometry because it is clean, 
 
 ```json
 {
-  "component": "vertical_support_unit",
-  "groups": ["support_foot_plate", "support_shaft_single_repeat", "support_top_bearing_block"],
-  "evidence": ["front elevation", "right oblique", "detail closeup"],
+  "component": "visual_unit_003_opening_or_shadow_region",
+  "groups": ["crop_backing_shadow", "crop_frame_left", "crop_internal_divider_00"],
+  "evidence": ["source crop", "bounding box", "image edge/dark-region score"],
   "confidence": 0.72
 }
 ```

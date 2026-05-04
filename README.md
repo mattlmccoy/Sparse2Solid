@@ -223,7 +223,7 @@ Sparse2Solid should not silently reuse an old template model for a new building.
 
 - Uploading new images marks prior analysis, unit plans, and model outputs as stale in the project manifest.
 - Unit confidence is computed from the current uploaded images; it is not a fixed demo percentage.
-- Unit candidates are intentionally small: base/steps, one support, one opening, one rail segment, one cornice strip, one roof slice, and optional promoted details.
+- Unit candidates are intentionally small and image-derived: anonymous crop proposals from repeated verticals, horizontal bands, upper edges, and opening/shadow regions.
 - The image contact sheet is shown beside the project so users can verify which photos are being analyzed.
 - Unit drafts and assembly previews are generated into the active project folder under `projects/<slug>/outputs/`.
 - Browser OBJ preview is available for unit drafts and assembly outputs without downloading files first.

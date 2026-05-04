@@ -11,7 +11,7 @@ These are the stable interfaces the pipeline is moving toward.
   "placements": [
     {
       "id": "front_repeat_01",
-      "component": "vertical_support_unit",
+      "component": "visual_unit_003_opening_or_shadow_region",
       "translate": [-3.6, 0.0, 0.0],
       "scale": [1.0, 1.0, 1.0],
       "rotate_z_deg": 0.0
@@ -74,21 +74,24 @@ projects/<slug>/
 
 ```json
 {
-  "strategy": "unit_first_reconstruction",
+  "strategy": "pixel_evidence_unit_discovery",
   "image_count": 12,
   "analyzable_image_count": 12,
   "image_analysis": {},
   "components": [
     {
-      "component": "vertical_support_unit",
-      "label": "Single vertical support / column unit",
-      "role": "repeatable_unit",
+      "component": "visual_unit_003_opening_or_shadow_region",
+      "label": "Visual unit: opening or shadow region #003",
+      "role": "visual_proposal",
+      "kind": "opening_or_shadow_region",
       "confidence": 0.72,
       "status": "ready_for_unit_draft",
-      "evidence": ["12 analyzable image(s)", "facade rhythm score 0.68"],
+      "evidence": ["source image front.jpg", "bbox 120,220,240,520", "visual kind opening or shadow region"],
       "matched_images": [],
-      "needs": ["straight-on view with repeated vertical rhythm", "oblique view showing support depth"],
-      "output_folder": "outputs/units/vertical_support_unit"
+      "crop_path": "components/crops/visual_unit_003_opening_or_shadow_region.jpg",
+      "bbox_normalized": [0.1, 0.31, 0.2, 0.72],
+      "needs": ["one clearer crop of this opening/detail", "confirm this crop is permanent structure"],
+      "output_folder": "outputs/units/visual_unit_003_opening_or_shadow_region"
     }
   ],
   "ignored_by_default": [
@@ -104,11 +107,11 @@ projects/<slug>/
 
 ```json
 {
-  "name": "vertical_support_unit",
-  "purpose": "one repeatable support, column, post, or pilaster primitive",
+  "name": "visual_unit_003_opening_or_shadow_region",
+  "purpose": "anonymous crop-derived 2.5D draft pending semantic review",
   "parts": [
     {
-      "name": "support_shaft_single_repeat",
+      "name": "crop_frame_left",
       "material": "limestone",
       "geometry": "mesh"
     }
