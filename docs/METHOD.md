@@ -57,8 +57,8 @@ The current public implementation uses procedural geometry because it is clean, 
 
 ```json
 {
-  "component": "repeated_vertical_module",
-  "groups": ["module_backing_plane", "vertical_repeat_00", "module_shadow_opening"],
+  "component": "vertical_support_unit",
+  "groups": ["support_foot_plate", "support_shaft_single_repeat", "support_top_bearing_block"],
   "evidence": ["front elevation", "right oblique", "detail closeup"],
   "confidence": 0.72
 }

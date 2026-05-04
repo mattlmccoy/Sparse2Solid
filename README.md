@@ -201,7 +201,7 @@ The GUI guides a new user through:
 - uploading sparse 2D reference images,
 - writing an image analysis report and contact sheet from those exact uploads,
 - generating a missing-view capture plan,
-- identifying likely reusable geometry units with evidence-based confidence,
+- identifying small reusable geometry units with evidence-based confidence,
 - building per-unit OBJ/MTL drafts and orbit QA sheets,
 - assembling the current unit drafts into a full model preview,
 - previewing OBJ outputs directly in the browser,
@@ -215,7 +215,7 @@ The intended reconstruction order is:
 project -> images -> coverage plan -> unit discovery -> unit drafts -> assembly preview
 ```
 
-This is intentionally different from one-shot reconstruction. The app should identify the important unique/repeated units first, ask for more images when a unit is underconstrained, and only then assemble the full structure.
+This is intentionally different from one-shot reconstruction. The app should identify the important unique/repeated small units first, ask for more images when a unit is underconstrained, and only then assemble the full structure. The coarse massing block is a measuring scaffold, not the final unit.
 
 ### Generalization Guardrails
 
@@ -223,6 +223,7 @@ Sparse2Solid should not silently reuse an old template model for a new building.
 
 - Uploading new images marks prior analysis, unit plans, and model outputs as stale in the project manifest.
 - Unit confidence is computed from the current uploaded images; it is not a fixed demo percentage.
+- Unit candidates are intentionally small: base/steps, one support, one opening, one rail segment, one cornice strip, one roof slice, and optional promoted details.
 - The image contact sheet is shown beside the project so users can verify which photos are being analyzed.
 - Unit drafts and assembly previews are generated into the active project folder under `projects/<slug>/outputs/`.
 - Browser OBJ preview is available for unit drafts and assembly outputs without downloading files first.

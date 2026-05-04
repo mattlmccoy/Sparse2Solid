@@ -22,32 +22,76 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic"}
 
 COMPONENT_HINTS = [
     {
-        "component": "primary_massing",
-        "label": "Primary building massing",
-        "why": "Every project needs a coarse blockout for footprint, height, and main proportions before detailed units are trusted.",
+        "component": "primary_massing_blockout",
+        "label": "Primary massing blockout",
+        "why": "A coarse volume is a measuring scaffold only: it anchors width, height, depth, and roof/base relationships before small units are assembled.",
         "needs": ["one wide exterior image", "one known scale or approximate dimensions", "at least one image with roof and ground visible"],
+        "role": "scaffold",
         "priority": 1,
+        "ready_threshold": 0.52,
     },
     {
-        "component": "repeated_vertical_module",
-        "label": "Repeated facade / porch module",
-        "why": "Long buildings often reduce to a repeated vertical rhythm: columns, windows, porch bays, doors, or balcony supports.",
-        "needs": ["straight-on elevation", "one representative closeup", "oblique view showing module depth"],
+        "component": "ground_base_unit",
+        "label": "Ground/base or step unit",
+        "why": "Base geometry should be solved separately so later supports, porch pieces, and repeated modules have an explicit ground chain.",
+        "needs": ["image with ground contact visible", "wide elevation", "oblique view showing base depth"],
+        "role": "structural_unit",
         "priority": 2,
+        "ready_threshold": 0.50,
     },
     {
-        "component": "roofline_system",
-        "label": "Roofline / cornice / upper silhouette",
-        "why": "Rooflines are commonly wrong if solved from a front image only, so they stay separate until enough evidence exists.",
-        "needs": ["roofline image", "side or oblique image", "image showing roof overhang and end condition"],
+        "component": "vertical_support_unit",
+        "label": "Single vertical support / column unit",
+        "why": "Porches and long facades are usually controlled by one repeated post or column, not by one giant facade chunk.",
+        "needs": ["straight-on view with repeated vertical rhythm", "oblique view showing support depth", "closeup if column/base shape matters"],
+        "role": "repeatable_unit",
         "priority": 3,
+        "ready_threshold": 0.56,
     },
     {
-        "component": "site_or_detail_unit",
-        "label": "Optional site/detail unit",
-        "why": "Small details are only reconstructed when the images contain enough evidence; trees, bushes, people, and temporary decor stay out by default.",
-        "needs": ["closeup of the object", "ground-contact or attachment view", "second angle if it is freestanding"],
+        "component": "opening_unit",
+        "label": "Single opening / window-door unit",
+        "why": "Openings should be drafted as one representative small unit, then repeated across the facade rather than baked into a large wall section.",
+        "needs": ["front/elevation view", "one clear crop of a window or door", "oblique view if recess depth is visible"],
+        "role": "repeatable_unit",
         "priority": 4,
+        "ready_threshold": 0.56,
+    },
+    {
+        "component": "horizontal_rail_band_unit",
+        "label": "Porch rail / balcony band unit",
+        "why": "Long railings, balconies, and porch edges are better as a short repeatable segment with rails and balusters.",
+        "needs": ["image showing railing or porch band", "side/oblique for depth", "closeup if baluster pattern matters"],
+        "role": "repeatable_unit",
+        "priority": 5,
+        "ready_threshold": 0.58,
+    },
+    {
+        "component": "cornice_trim_unit",
+        "label": "Cornice / trim strip unit",
+        "why": "Dentils, gutters, belt courses, and trim bands are thin repeated pieces that should not be merged into the whole facade.",
+        "needs": ["roofline or upper facade view", "image with horizontal trim visible", "oblique for projection depth"],
+        "role": "repeatable_unit",
+        "priority": 6,
+        "ready_threshold": 0.56,
+    },
+    {
+        "component": "roof_plane_unit",
+        "label": "Roof plane / ridge slice unit",
+        "why": "Roof massing needs its own small slice so pitch, overhang, ridge, and end returns can be adjusted independently.",
+        "needs": ["roofline image", "side or oblique image", "image showing roof overhang and end condition"],
+        "role": "repeatable_unit",
+        "priority": 7,
+        "ready_threshold": 0.58,
+    },
+    {
+        "component": "detail_or_ornament_unit",
+        "label": "Optional detail/ornament unit",
+        "why": "Small details are only reconstructed when the images contain enough evidence or the user explicitly promotes them.",
+        "needs": ["closeup of the object", "ground-contact or attachment view", "second angle if it is freestanding"],
+        "role": "optional_detail",
+        "priority": 8,
+        "ready_threshold": 0.62,
     },
 ]
 
@@ -145,12 +189,13 @@ def component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any
     planned = []
     for hint in COMPONENT_HINTS:
         confidence, evidence = component_confidence(hint["component"], summary)
-        status = "ready_for_unit_draft" if confidence >= 0.58 else "needs_more_images"
+        status = "ready_for_unit_draft" if confidence >= hint.get("ready_threshold", 0.58) else "needs_more_images"
         planned.append(
             {
                 "component": hint["component"],
                 "label": hint["label"],
                 "why": hint["why"],
+                "role": hint["role"],
                 "confidence": round(confidence, 2),
                 "status": status,
                 "evidence": evidence,
@@ -192,14 +237,26 @@ def component_confidence(component: str, summary: dict[str, Any]) -> tuple[float
         evidence.append(f"{wide} wide/context image(s)")
     if quality:
         evidence.append(f"average image quality {quality:.2f}")
-    if component == "primary_massing":
+    if component == "primary_massing_blockout":
         confidence = min(0.94, 0.12 + n * 0.075 + quality * 0.30 + diversity * 0.22 + min(wide, 3) * 0.075)
         evidence.append("uses image aspect ratios and broad edge structure")
-    elif component == "repeated_vertical_module":
-        confidence = min(0.92, 0.08 + n * 0.045 + rhythm * 0.50 + quality * 0.16)
+    elif component == "ground_base_unit":
+        confidence = min(0.88, 0.10 + n * 0.045 + quality * 0.24 + min(wide, 3) * 0.08)
+        evidence.append("uses wide views to establish ground/base support")
+    elif component == "vertical_support_unit":
+        confidence = min(0.90, 0.08 + n * 0.035 + rhythm * 0.48 + quality * 0.16)
         evidence.append(f"facade rhythm score {rhythm:.2f}")
-    elif component == "roofline_system":
-        confidence = min(0.82, 0.08 + n * 0.045 + roofline * 0.46 + diversity * 0.14)
+    elif component == "opening_unit":
+        confidence = min(0.88, 0.08 + n * 0.032 + rhythm * 0.38 + quality * 0.20 + min(wide, 2) * 0.04)
+        evidence.append(f"opening rhythm score {rhythm:.2f}")
+    elif component == "horizontal_rail_band_unit":
+        confidence = min(0.84, 0.06 + n * 0.030 + roofline * 0.26 + rhythm * 0.18 + quality * 0.16)
+        evidence.append("uses combined horizontal bands and repeated vertical baluster evidence")
+    elif component == "cornice_trim_unit":
+        confidence = min(0.86, 0.07 + n * 0.032 + roofline * 0.44 + quality * 0.15)
+        evidence.append(f"horizontal trim score {roofline:.2f}")
+    elif component == "roof_plane_unit":
+        confidence = min(0.82, 0.08 + n * 0.036 + roofline * 0.42 + diversity * 0.14)
         evidence.append(f"roofline/horizontal edge score {roofline:.2f}")
     else:
         confidence = min(0.54, 0.04 + n * 0.012 + quality * 0.14)
@@ -211,11 +268,11 @@ def component_confidence(component: str, summary: dict[str, Any]) -> tuple[float
 
 def evidence_images(analysis: dict[str, Any], component: str) -> list[dict[str, Any]]:
     images = [item for item in analysis["images"] if item.get("analyzable")]
-    if component == "repeated_vertical_module":
+    if component in {"vertical_support_unit", "opening_unit", "horizontal_rail_band_unit"}:
         images = sorted(images, key=lambda item: item.get("facade_rhythm_score", 0), reverse=True)
-    elif component == "roofline_system":
+    elif component in {"roof_plane_unit", "cornice_trim_unit"}:
         images = sorted(images, key=lambda item: item.get("roofline_score", 0), reverse=True)
-    elif component == "primary_massing":
+    elif component in {"primary_massing_blockout", "ground_base_unit"}:
         images = sorted(images, key=lambda item: (item.get("aspect_ratio", 0), item.get("image_quality_score", 0)), reverse=True)
     else:
         images = sorted(images, key=lambda item: item.get("image_quality_score", 0), reverse=True)
@@ -287,40 +344,74 @@ def generic_unit_parts(component: dict[str, Any], summary: dict[str, Any]) -> li
     aspect = max(1.2, min(6.0, float(summary.get("average_aspect_ratio") or 2.2)))
     rhythm = max(2, min(18, int(round(float(summary.get("average_vertical_peaks") or 5)))))
     key = component["component"]
-    if key == "primary_massing":
+    if key == "primary_massing_blockout":
         width = 4.0 + aspect * 2.2
         height = 2.6 + min(2.2, float(summary.get("average_roofline") or 0.3) * 1.7)
         depth = 1.6 + float(summary.get("view_diversity_score") or 0.2) * 2.6
         return [
-            box_part("image_conditioned_main_volume", "limestone", (width, depth, height), (0, 0, height / 2)),
-            box_part("front_shadow_plane_from_photo_edges", "shadow", (width * 0.92, 0.08, height * 0.62), (0, -depth / 2 - 0.05, height * 0.43)),
-            box_part("ground_reference_slab", "stone", (width + 0.8, depth + 0.8, 0.14), (0, 0, 0.07)),
+            box_part("scaffold_main_volume_low_detail", "limestone", (width, depth, height), (0, 0, height / 2)),
+            box_part("scaffold_front_reference_plane", "shadow", (width * 0.94, 0.05, height * 0.72), (0, -depth / 2 - 0.04, height * 0.45)),
         ]
-    if key == "repeated_vertical_module":
-        parts: list[MeshPart] = [box_part("module_backing_plane", "limestone", (2.4, 0.18, 2.8), (0, 0, 1.4))]
-        count = max(2, min(5, rhythm // 3))
-        for idx, x in enumerate(np_linspace(-0.95, 0.95, count)):
-            parts.append(cylinder_part(f"vertical_repeat_{idx:02d}", "limestone", 0.055, 2.5, (x, -0.16, 1.28), 16))
-        parts.extend(
-            [
-                box_part("module_lower_rail", "stone", (2.55, 0.26, 0.18), (0, -0.08, 0.15)),
-                box_part("module_upper_rail", "limestone", (2.55, 0.22, 0.18), (0, -0.08, 2.72)),
-                box_part("module_shadow_opening", "shadow", (1.75, 0.08, 1.85), (0, -0.18, 1.36)),
-            ]
-        )
+    if key == "ground_base_unit":
+        return [
+            box_part("base_ground_contact_slab", "stone", (1.8, 0.9, 0.16), (0, 0, 0.08)),
+            box_part("base_step_lower", "stone", (1.65, 0.72, 0.14), (0, -0.08, 0.23)),
+            box_part("base_step_upper", "stone", (1.35, 0.52, 0.12), (0, -0.08, 0.36)),
+            box_part("base_attachment_plinth", "limestone", (0.72, 0.42, 0.18), (0, -0.08, 0.51)),
+        ]
+    if key == "vertical_support_unit":
+        parts: list[MeshPart] = [
+            box_part("support_foot_plate", "stone", (0.52, 0.44, 0.12), (0, 0, 0.06)),
+            cylinder_part("support_base_round", "limestone", 0.18, 0.16, (0, 0, 0.20), 24),
+            cylinder_part("support_shaft_single_repeat", "limestone", 0.085, 2.05, (0, 0, 1.30), 24),
+            cylinder_part("support_capital_round", "limestone", 0.20, 0.16, (0, 0, 2.40), 24),
+            box_part("support_top_bearing_block", "limestone", (0.44, 0.38, 0.18), (0, 0, 2.57)),
+        ]
         return parts
-    if key == "roofline_system":
-        width = 5.4 + aspect
-        return [
-            box_part("cornice_band_from_horizontal_edges", "limestone", (width, 0.34, 0.26), (0, 0, 0.25)),
-            box_part("roof_plane_low_confidence", "roof", (width * 1.04, 2.0, 0.18), (0, 0.18, 0.72)),
-            box_part("ridge_or_parapet_placeholder", "roof", (width * 0.94, 0.16, 0.18), (0, 0.05, 1.05)),
+    if key == "opening_unit":
+        mullion_count = max(2, min(4, rhythm // 5))
+        parts = [
+            box_part("opening_recess_shadow", "shadow", (0.92, 0.08, 1.48), (0, -0.08, 0.92)),
+            box_part("opening_outer_frame_left", "limestone", (0.08, 0.16, 1.62), (-0.50, 0, 0.96)),
+            box_part("opening_outer_frame_right", "limestone", (0.08, 0.16, 1.62), (0.50, 0, 0.96)),
+            box_part("opening_outer_frame_top", "limestone", (1.08, 0.16, 0.08), (0, 0, 1.73)),
+            box_part("opening_outer_frame_bottom", "limestone", (1.08, 0.16, 0.08), (0, 0, 0.15)),
+            box_part("opening_glass_panel", "glass", (0.82, 0.04, 1.34), (0, -0.11, 0.92)),
+            box_part("opening_midrail", "limestone", (0.82, 0.08, 0.045), (0, -0.14, 0.92)),
         ]
-    if key == "site_or_detail_unit":
+        for idx, x in enumerate(np_linspace(-0.28, 0.28, mullion_count)):
+            parts.append(box_part(f"opening_mullion_{idx:02d}", "limestone", (0.04, 0.08, 1.32), (x, -0.14, 0.92)))
+        return parts
+    if key == "horizontal_rail_band_unit":
+        parts = [
+            box_part("rail_bottom_bar", "limestone", (1.6, 0.16, 0.10), (0, 0, 0.18)),
+            box_part("rail_top_bar", "limestone", (1.6, 0.16, 0.12), (0, 0, 0.88)),
+        ]
+        for idx, x in enumerate(np_linspace(-0.66, 0.66, 5)):
+            parts.append(cylinder_part(f"rail_baluster_{idx:02d}", "limestone", 0.045, 0.62, (x, 0, 0.54), 14))
+        return parts
+    if key == "cornice_trim_unit":
+        parts = [
+            box_part("cornice_backing_strip", "limestone", (1.8, 0.18, 0.22), (0, 0, 0.42)),
+            box_part("cornice_projecting_lip", "limestone", (1.9, 0.34, 0.10), (0, -0.08, 0.58)),
+            box_part("cornice_lower_shadow_line", "shadow", (1.78, 0.04, 0.05), (0, -0.20, 0.27)),
+        ]
+        for idx, x in enumerate(np_linspace(-0.72, 0.72, 7)):
+            parts.append(box_part(f"cornice_dentil_{idx:02d}", "limestone", (0.08, 0.16, 0.16), (x, -0.10, 0.18)))
+        return parts
+    if key == "roof_plane_unit":
+        width = min(3.2, 1.2 + aspect * 0.34)
         return [
-            box_part("detail_ground_pad", "stone", (0.8, 0.8, 0.16), (0, 0, 0.08)),
-            cylinder_part("generic_detail_vertical_axis", "accent", 0.07, 1.6, (0, 0, 0.88), 18),
-            box_part("detail_attachment_marker", "accent", (0.35, 0.18, 0.18), (0, -0.02, 1.74)),
+            box_part("roof_slice_bearing_plate", "limestone", (width, 0.34, 0.16), (0, 0, 0.08)),
+            box_part("roof_slice_sloped_plane_proxy", "roof", (width * 1.04, 1.15, 0.14), (0, 0.18, 0.45)),
+            box_part("roof_slice_front_eave", "roof", (width * 1.08, 0.16, 0.18), (0, -0.43, 0.30)),
+            box_part("roof_slice_ridge_marker", "roof", (width * 0.94, 0.10, 0.18), (0, 0.72, 0.59)),
+        ]
+    if key == "detail_or_ornament_unit":
+        return [
+            box_part("detail_attachment_pad", "stone", (0.46, 0.30, 0.10), (0, 0, 0.05)),
+            cylinder_part("detail_vertical_axis_placeholder", "accent", 0.045, 0.65, (0, 0, 0.42), 14),
+            box_part("detail_cap_placeholder", "accent", (0.24, 0.18, 0.12), (0, 0, 0.80)),
         ]
     return []
 
@@ -334,33 +425,54 @@ def np_linspace(start: float, stop: float, count: int) -> list[float]:
 
 def build_assembly_preview(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     units = manifest.get("outputs", {}).get("units", {}).get("units", [])
+    built_components = {unit["component"]: unit for unit in units if unit.get("built")}
     analysis = {}
     component_path = project_dir / str(manifest.get("component_plan", "components/component_plan.json"))
     if component_path.exists():
         analysis = json.loads(component_path.read_text(encoding="utf-8")).get("image_analysis", {})
     summary = analysis.get("summary", {})
     width = 8.0 + float(summary.get("average_aspect_ratio") or 2.0) * 2.0
+    bay_count = max(4, min(16, int(round(float(summary.get("average_vertical_peaks") or 8) / 2))))
+    spacing = width / max(1, bay_count)
     parts = [
         box_part("assembly_ground_slab", "stone", (width + 1.0, 4.2, 0.16), (0, 0, 0.08)),
+        box_part("assembly_front_structural_backing", "limestone", (width, 0.24, 3.55), (0, -2.14, 1.92)),
     ]
-    x = -width / 2 + 1.2
-    for unit in units:
-        if not unit.get("built"):
-            continue
-        unit_parts = generic_unit_parts(unit, summary)
-        if unit["component"] == "primary_massing":
-            parts.extend([part.transformed(name_prefix="assembly_primary__", translate=(0, 0, 0.12)) for part in unit_parts])
-        elif unit["component"] == "repeated_vertical_module":
-            bay_count = max(3, min(12, int(round(float(summary.get("average_vertical_peaks") or 6) / 2))))
-            spacing = width / max(1, bay_count)
-            for idx in range(bay_count):
-                px = -width / 2 + spacing * (idx + 0.5)
-                parts.extend([part.transformed(name_prefix=f"assembly_repeat_{idx:02d}__", translate=(px, -2.1, 0.16), scale=(0.72, 1, 1)) for part in unit_parts])
-        elif unit["component"] == "roofline_system":
-            parts.extend([part.transformed(name_prefix="assembly_roofline__", translate=(0, 0, 3.25), scale=(1.35, 1, 1)) for part in unit_parts])
-        else:
-            parts.extend([part.transformed(name_prefix=f"assembly_detail_{unit['component']}__", translate=(x, -2.55, 0.14)) for part in unit_parts])
-            x += 1.2
+    if "primary_massing_blockout" in built_components:
+        unit_parts = generic_unit_parts(built_components["primary_massing_blockout"], summary)
+        parts.extend([part.transformed(name_prefix="assembly_scaffold__", translate=(0, 0, 0.12)) for part in unit_parts])
+    if "ground_base_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["ground_base_unit"], summary)
+        for idx in range(bay_count):
+            px = -width / 2 + spacing * (idx + 0.5)
+            parts.extend([part.transformed(name_prefix=f"assembly_base_{idx:02d}__", translate=(px, -1.98, 0.12), scale=(min(1.0, spacing / 1.8), 1, 1)) for part in unit_parts])
+    if "opening_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["opening_unit"], summary)
+        for idx in range(bay_count):
+            px = -width / 2 + spacing * (idx + 0.5)
+            parts.extend([part.transformed(name_prefix=f"assembly_opening_{idx:02d}__", translate=(px, -2.14, 0.70), scale=(min(1.1, spacing / 1.25), 1, 1.08)) for part in unit_parts])
+    if "vertical_support_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["vertical_support_unit"], summary)
+        for idx in range(bay_count + 1):
+            px = -width / 2 + spacing * idx
+            parts.extend([part.transformed(name_prefix=f"assembly_support_{idx:02d}__", translate=(px, -2.28, 0.55), scale=(1, 1, 1.12)) for part in unit_parts])
+    if "horizontal_rail_band_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["horizontal_rail_band_unit"], summary)
+        for idx in range(bay_count):
+            px = -width / 2 + spacing * (idx + 0.5)
+            parts.extend([part.transformed(name_prefix=f"assembly_rail_{idx:02d}__", translate=(px, -2.34, 2.70), scale=(min(1.1, spacing / 1.55), 1, 1)) for part in unit_parts])
+    if "cornice_trim_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["cornice_trim_unit"], summary)
+        for idx in range(bay_count):
+            px = -width / 2 + spacing * (idx + 0.5)
+            parts.extend([part.transformed(name_prefix=f"assembly_cornice_{idx:02d}__", translate=(px, -2.16, 3.35), scale=(min(1.1, spacing / 1.7), 1, 1)) for part in unit_parts])
+    if "roof_plane_unit" in built_components:
+        unit_parts = generic_unit_parts(built_components["roof_plane_unit"], summary)
+        roof_segments = max(2, min(8, bay_count // 2))
+        roof_spacing = width / roof_segments
+        for idx in range(roof_segments):
+            px = -width / 2 + roof_spacing * (idx + 0.5)
+            parts.extend([part.transformed(name_prefix=f"assembly_roof_{idx:02d}__", translate=(px, -0.15, 3.82), scale=(min(1.4, roof_spacing / 2.2), 1.35, 1.15)) for part in unit_parts])
     out_dir = project_dir / "outputs" / "assembly"
     outputs = export_parts(out_dir, "image_conditioned_assembly_preview", parts)
     connectivity = structural_connectivity(parts, tolerance=0.08)
@@ -952,9 +1064,9 @@ INDEX_HTML = r"""<!doctype html>
           <div id="planSummary" class="checklist" style="margin-top:16px;"></div>
         </article>
         <article class="card">
-          <h3>3. Discover Geometry Units</h3>
-          <p>The next pass looks at your uploaded images and proposes reusable units: the main mass, repeated facade rhythms, roofline systems, and any details that have enough evidence. Context like trees and crowds stays ignored unless promoted.</p>
-          <button id="componentsBtn" class="blue">Identify Units</button>
+          <h3>3. Discover Small Geometry Units</h3>
+          <p>The next pass proposes small reusable primitives: base/steps, one support, one opening, one rail segment, one cornice strip, and one roof slice. The coarse mass is only a measuring scaffold.</p>
+          <button id="componentsBtn" class="blue">Identify Small Units</button>
           <div id="componentSummary" class="unit-list"></div>
         </article>
         <article class="card">
@@ -1059,7 +1171,7 @@ INDEX_HTML = r"""<!doctype html>
         <p><strong>Slug:</strong> ${project.slug}</p>
         <p><strong>Images:</strong> ${project.images.length}</p>
         <p><strong>Capture plan:</strong> ${project.reference_plan ? "complete" : "not yet"}</p>
-        <p><strong>Unit plan:</strong> ${project.component_plan ? "complete" : "not yet"}</p>
+        <p><strong>Small-unit plan:</strong> ${project.component_plan ? "complete" : "not yet"}</p>
         <p><strong>Unit drafts:</strong> ${project.outputs?.units ? "built" : "not yet"}</p>
       `;
       $("folderMap").innerHTML = `
@@ -1067,7 +1179,7 @@ INDEX_HTML = r"""<!doctype html>
         <div>  images/ <span class="small">uploaded references</span></div>
         <div>  analysis/ <span class="small">image metrics + contact sheet from your photos</span></div>
         <div>  reference_plan.json <span class="small">missing-view checklist</span></div>
-        <div>  components/component_plan.json <span class="small">unit candidates</span></div>
+        <div>  components/component_plan.json <span class="small">small-unit candidates</span></div>
         <div>  outputs/units/ <span class="small">per-unit OBJ/MTL/orbits</span></div>
         <div>  outputs/assembly/ <span class="small">full model preview</span></div>
       `;
@@ -1077,7 +1189,7 @@ INDEX_HTML = r"""<!doctype html>
       if (project.reference_plan_data) renderPlan(project.reference_plan_data, false);
       else $("planSummary").innerHTML = `<p class="small">Upload images, then check coverage to see which views are strong or missing.</p>`;
       if (project.component_plan_data) renderComponents(project.component_plan_data, false);
-      else $("componentSummary").innerHTML = `<p class="small">Coverage comes first. Unit discovery will appear here.</p>`;
+      else $("componentSummary").innerHTML = `<p class="small">Coverage comes first. Small-unit discovery will appear here.</p>`;
       if (project.outputs?.units) renderUnitOutputs(project.outputs.units);
       else $("unitOutputs").innerHTML = `<p class="small">Ready unit drafts and their OBJ/MTL/orbit outputs will appear here.</p>`;
       if (project.outputs?.assembly) renderAssemblyOutputs(project.outputs.assembly);
@@ -1132,6 +1244,7 @@ INDEX_HTML = r"""<!doctype html>
             <div><strong>${component.label}</strong><br><span class="small">${component.why}</span></div>
             <div class="confidence ${component.confidence < .66 ? "low" : ""}">${Math.round(component.confidence * 100)}%</div>
           </div>
+          <p class="small"><strong>Role:</strong> ${(component.role || "unit").replaceAll("_", " ")}</p>
           <p class="small"><strong>Status:</strong> ${component.status.replaceAll("_", " ")}</p>
           <p class="small"><strong>Evidence:</strong> ${(component.evidence || []).join(" · ")}</p>
           <ul class="needs">${component.needs.map(need => `<li>${need}</li>`).join("")}</ul>

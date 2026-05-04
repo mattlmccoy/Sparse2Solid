@@ -11,7 +11,7 @@ These are the stable interfaces the pipeline is moving toward.
   "placements": [
     {
       "id": "front_repeat_01",
-      "component": "repeated_vertical_module",
+      "component": "vertical_support_unit",
       "translate": [-3.6, 0.0, 0.0],
       "scale": [1.0, 1.0, 1.0],
       "rotate_z_deg": 0.0
@@ -80,14 +80,15 @@ projects/<slug>/
   "image_analysis": {},
   "components": [
     {
-      "component": "repeated_vertical_module",
-      "label": "Repeated facade / porch module",
+      "component": "vertical_support_unit",
+      "label": "Single vertical support / column unit",
+      "role": "repeatable_unit",
       "confidence": 0.72,
       "status": "ready_for_unit_draft",
       "evidence": ["12 analyzable image(s)", "facade rhythm score 0.68"],
       "matched_images": [],
-      "needs": ["straight-on elevation", "one representative closeup", "oblique view showing module depth"],
-      "output_folder": "outputs/units/repeated_vertical_module"
+      "needs": ["straight-on view with repeated vertical rhythm", "oblique view showing support depth"],
+      "output_folder": "outputs/units/vertical_support_unit"
     }
   ],
   "ignored_by_default": [
@@ -103,12 +104,12 @@ projects/<slug>/
 
 ```json
 {
-  "name": "repeated_vertical_module",
-  "purpose": "repeatable facade, porch, window, column, or support rhythm",
+  "name": "vertical_support_unit",
+  "purpose": "one repeatable support, column, post, or pilaster primitive",
   "parts": [
     {
-      "name": "vertical_repeat_00",
-      "material": "primary_wall",
+      "name": "support_shaft_single_repeat",
+      "material": "limestone",
       "geometry": "mesh"
     }
   ]
