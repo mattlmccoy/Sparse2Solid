@@ -27,6 +27,7 @@ projects/<slug>/
   project.json
   images/
   reference_plan.json
+  components/
   outputs/
 ```
 
@@ -46,6 +47,30 @@ projects/<slug>/
   ],
   "outputs": {},
   "events": []
+}
+```
+
+## Component Plan
+
+```json
+{
+  "strategy": "unit_first_reconstruction",
+  "components": [
+    {
+      "component": "facade_bay",
+      "label": "Facade bay / repeated wall opening",
+      "confidence": 0.72,
+      "status": "ready_for_unit_draft",
+      "needs": ["straight-on front elevation", "one closeup", "one oblique"],
+      "output_folder": "outputs/units/facade_bay"
+    }
+  ],
+  "ignored_by_default": [
+    {
+      "category": "vegetation / people / temporary decor",
+      "reason": "Usually context, not reconstruction targets."
+    }
+  ]
 }
 ```
 

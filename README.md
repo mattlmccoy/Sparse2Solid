@@ -200,11 +200,20 @@ The GUI guides a new user through:
 - creating a project,
 - uploading sparse 2D reference images,
 - generating a missing-view capture plan,
-- building the starter semantic model,
-- rendering orbit QA contact sheets,
+- identifying likely reusable geometry units,
+- building per-unit OBJ/MTL drafts and orbit QA sheets,
+- assembling the current unit drafts into a full model preview,
 - opening OBJ/MTL/report outputs.
 
 The current GUI is local-first. Uploaded images stay in the local `projects/` folder.
+
+The intended reconstruction order is:
+
+```text
+project -> images -> coverage plan -> unit discovery -> unit drafts -> assembly preview
+```
+
+This is intentionally different from one-shot reconstruction. The app should identify the important unique/repeated units first, ask for more images when a unit is underconstrained, and only then assemble the full structure.
 
 On macOS, you can also double-click:
 

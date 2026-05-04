@@ -31,8 +31,10 @@ python scripts/run_gui.py --workspace ~/Sparse2SolidProjects
 - Creates named local projects.
 - Uploads sparse reference images into `projects/<slug>/images/`.
 - Generates `reference_plan.json` from the current image set.
-- Builds the starter semantic OBJ/MTL model.
-- Renders orbit contact sheets for visual QA.
+- Identifies likely reconstruction units in `components/component_plan.json`.
+- Builds ready unit drafts into `outputs/units/<component>/`.
+- Renders per-unit orbit contact sheets for visual QA.
+- Assembles current unit drafts into `outputs/assembly/`.
 - Shows model/report/orbit links in the browser.
 
 ## Why This Matters
@@ -43,12 +45,15 @@ The GUI is intentionally local-first. It does not upload images to a server. Tha
 
 ## Current Limitation
 
-The first GUI release builds the included generic architectural starter model after upload. The next major step is to connect uploaded photos to actual component proposal/generation flows. The GUI API and project structure are designed for that future step:
+The first GUI release uses heuristic component discovery and the included architectural component generators. The next major step is to connect uploaded photos to richer image-conditioned component proposal/generation flows. The GUI API and project structure are designed for that:
 
 ```text
 projects/<slug>/
   images/
   reference_plan.json
+  components/component_plan.json
   outputs/
+    units/
+    assembly/
   project.json
 ```

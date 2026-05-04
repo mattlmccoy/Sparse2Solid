@@ -65,8 +65,19 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     assert plan["available_images"]
     assert any(item["view"] == "hero_front" for item in plan["checklist"])
 
-    built = client.post(f"/api/projects/{slug}/build-demo")
-    assert built.status_code == 200
-    report = built.get_json()["report"]
+    discovered = client.post(f"/api/projects/{slug}/components")
+    assert discovered.status_code == 200
+    component_plan = discovered.get_json()["component_plan"]
+    assert any(component["component"] == "facade_bay" for component in component_plan["components"])
+
+    units = client.post(f"/api/projects/{slug}/build-units")
+    assert units.status_code == 200
+    unit_report = units.get_json()["report"]
+    assert unit_report["built_count"] >= 1
+    assert unit_report["units"][0]["output_folder"].startswith("outputs/units/")
+
+    assembled = client.post(f"/api/projects/{slug}/assemble")
+    assert assembled.status_code == 200
+    report = assembled.get_json()["report"]
     assert report["connectivity"]["grounded"]
     assert report["orbit"]["contact_sheet"]["url"].endswith("contact_sheet.jpg")
