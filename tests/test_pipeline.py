@@ -85,6 +85,31 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     assert plan["available_images"]
     assert any(item["view"] == "hero_front" for item in plan["checklist"])
 
+    labeled = client.post(
+        f"/api/projects/{slug}/training-examples",
+        json={
+            "image_name": "front-view.jpg",
+            "label": "opening",
+            "bbox_normalized": [0.12, 0.36, 0.21, 0.78],
+            "notes": "keep one representative facade opening",
+        },
+    )
+    assert labeled.status_code == 200
+    examples = labeled.get_json()["examples"]
+    assert examples[0]["label"] == "opening"
+    assert (tmp_path / "workspace" / slug / examples[0]["crop_path"]).exists()
+
+    ignored = client.post(
+        f"/api/projects/{slug}/training-examples",
+        json={
+            "image_name": "front-view.jpg",
+            "label": "ignore",
+            "bbox_normalized": [0.0, 0.0, 0.08, 0.12],
+            "notes": "ignore sky/background corner",
+        },
+    )
+    assert ignored.status_code == 200
+
     discovered = client.post(f"/api/projects/{slug}/components")
     assert discovered.status_code == 200
     component_plan = discovered.get_json()["component_plan"]
@@ -93,6 +118,7 @@ def test_gui_guides_project_upload_plan_and_build(tmp_path):
     assert component_plan["strategy"] == "pixel_evidence_unit_discovery"
     assert any(component["component"].startswith("visual_unit_") for component in component_plan["components"])
     assert any(component.get("crop_path") for component in component_plan["components"])
+    assert any(component.get("source") == "manual" for component in component_plan["components"])
     assert any(component.get("kind") in {"vertical_repeat", "horizontal_band", "upper_edge_or_roofline", "opening_or_shadow_region"} for component in component_plan["components"])
 
     units = client.post(f"/api/projects/{slug}/build-units")

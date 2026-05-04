@@ -199,6 +199,7 @@ The GUI guides a new user through:
 
 - creating a project,
 - uploading sparse 2D reference images,
+- teaching the detector with a few manual keep/ignore crop labels,
 - writing an image analysis report and contact sheet from those exact uploads,
 - generating a missing-view capture plan,
 - identifying small reusable geometry units with evidence-based confidence,
@@ -212,7 +213,7 @@ The current GUI is local-first. Uploaded images stay in the local `projects/` fo
 The intended reconstruction order is:
 
 ```text
-project -> images -> coverage plan -> unit discovery -> unit drafts -> assembly preview
+project -> images -> crop labels -> coverage plan -> unit discovery -> unit drafts -> assembly preview
 ```
 
 This is intentionally different from one-shot reconstruction. The app should identify the important unique/repeated small units first, ask for more images when a unit is underconstrained, and only then assemble the full structure. The coarse massing block is a measuring scaffold, not the final unit.
@@ -224,6 +225,7 @@ Sparse2Solid should not silently reuse an old template model for a new building.
 - Uploading new images marks prior analysis, unit plans, and model outputs as stale in the project manifest.
 - Unit confidence is computed from the current uploaded images; it is not a fixed demo percentage.
 - Unit candidates are intentionally small and image-derived: anonymous crop proposals from repeated verticals, horizontal bands, upper edges, and opening/shadow regions.
+- Manual crop labels can steer discovery: `structure`, `opening`, `vertical`, `band`, and `roofline` labels are promoted into unit candidates; `ignore` labels suppress overlapping automatic crops.
 - The image contact sheet is shown beside the project so users can verify which photos are being analyzed.
 - Unit drafts and assembly previews are generated into the active project folder under `projects/<slug>/outputs/`.
 - Browser OBJ preview is available for unit drafts and assembly outputs without downloading files first.

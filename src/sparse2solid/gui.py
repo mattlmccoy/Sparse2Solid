@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
+from PIL import Image, ImageOps
 from werkzeug.datastructures import FileStorage
 
 from .connectivity import structural_connectivity
@@ -63,6 +64,12 @@ def invalidate_derived_outputs(manifest: dict[str, Any], reason: str) -> None:
     event(manifest, reason)
 
 
+def invalidate_model_outputs(manifest: dict[str, Any], reason: str) -> None:
+    manifest.pop("component_plan", None)
+    manifest["outputs"] = {}
+    event(manifest, reason)
+
+
 def safe_project(root: Path, slug: str) -> Path:
     candidate = (root / slugify(slug)).resolve()
     if root.resolve() not in candidate.parents and candidate != root.resolve():
@@ -105,6 +112,72 @@ def save_uploads(files: list[FileStorage], image_dir: Path) -> list[str]:
         uploaded.save(target)
         saved.append(target.name)
     return saved
+
+
+def training_examples(project_dir: Path) -> list[dict[str, Any]]:
+    path = project_dir / "components" / "training_examples.jsonl"
+    if not path.exists():
+        return []
+    examples: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            examples.append(json.loads(line))
+        except ValueError:
+            continue
+    return examples
+
+
+def save_training_example(project_dir: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    images = {record["name"]: project_dir / record["path"] for record in image_records(project_dir)}
+    image_name = str(payload.get("image_name") or "")
+    if image_name not in images:
+        raise ValueError("Choose one of the uploaded images.")
+    label = str(payload.get("label") or "structure").strip().lower()
+    allowed_labels = {"structure", "opening", "window", "door", "vertical", "support", "column", "band", "rail", "roofline", "roof", "ignore"}
+    if label not in allowed_labels:
+        raise ValueError("Unsupported crop label.")
+    bbox = payload.get("bbox_normalized")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        raise ValueError("Draw a crop box before saving.")
+    try:
+        x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Crop box coordinates must be numeric.") from exc
+    if x2 - x1 < 0.015 or y2 - y1 < 0.015:
+        raise ValueError("Crop box is too small to teach the detector.")
+    examples = training_examples(project_dir)
+    example_id = f"example_{len(examples) + 1:04d}"
+    example = {
+        "id": example_id,
+        "image_name": image_name,
+        "label": label,
+        "bbox_normalized": [round(x1, 5), round(y1, 5), round(x2, 5), round(y2, 5)],
+        "notes": str(payload.get("notes") or "").strip(),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    crop_path = write_training_crop(project_dir, images[image_name], example)
+    example["crop_path"] = crop_path.relative_to(project_dir).as_posix()
+    out_path = project_dir / "components" / "training_examples.jsonl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(example, sort_keys=True) + "\n")
+    return example
+
+
+def write_training_crop(project_dir: Path, image_path: Path, example: dict[str, Any]) -> Path:
+    image = Image.open(image_path)
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    width, height = image.size
+    x1, y1, x2, y2 = example["bbox_normalized"]
+    crop = image.crop((int(x1 * width), int(y1 * height), int(x2 * width), int(y2 * height)))
+    crop.thumbnail((420, 420))
+    crop_dir = project_dir / "components" / "training_crops"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+    crop_path = crop_dir / f"{example['id']}_{example['label']}.jpg"
+    crop.save(crop_path, quality=92)
+    return crop_path
 
 
 def component_plan(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -340,6 +413,7 @@ def create_app(workspace: Path | None = None) -> Flask:
             return jsonify({"error": "unknown project"}), 404
         manifest = project_manifest(project_dir)
         manifest["images"] = image_records(project_dir)
+        manifest["training_examples"] = training_examples(project_dir)
         if (project_dir / "analysis" / "image_analysis.json").exists():
             manifest["image_analysis_url"] = f"/api/projects/{project_dir.name}/files/analysis/image_analysis.json"
             manifest["image_contact_sheet_url"] = f"/api/projects/{project_dir.name}/files/analysis/image_contact_sheet.jpg"
@@ -351,6 +425,29 @@ def create_app(workspace: Path | None = None) -> Flask:
         if manifest.get("component_plan") and (project_dir / manifest["component_plan"]).exists():
             manifest["component_plan_data"] = json.loads((project_dir / manifest["component_plan"]).read_text(encoding="utf-8"))
         return jsonify(manifest)
+
+    @app.get("/api/projects/<slug>/training-examples")
+    def get_training_examples(slug: str):
+        project_dir = safe_project(project_root, slug)
+        if not project_dir.exists():
+            return jsonify({"error": "unknown project"}), 404
+        return jsonify({"examples": training_examples(project_dir)})
+
+    @app.post("/api/projects/<slug>/training-examples")
+    def create_training_example(slug: str):
+        project_dir = safe_project(project_root, slug)
+        manifest = project_manifest(project_dir)
+        payload = request.get_json(silent=True) or {}
+        try:
+            example = save_training_example(project_dir, payload)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        action = "ignore" if example["label"] == "ignore" else "keep"
+        invalidate_model_outputs(manifest, f"Added {action} crop label {example['id']}; unit discovery outputs were marked stale.")
+        write_manifest(project_dir, manifest)
+        manifest["images"] = image_records(project_dir)
+        manifest["training_examples"] = training_examples(project_dir)
+        return jsonify({"example": example, "examples": manifest["training_examples"], "project": manifest})
 
     @app.post("/api/projects/<slug>/images")
     def upload_images(slug: str):
@@ -505,7 +602,7 @@ INDEX_HTML = r"""<!doctype html>
         linear-gradient(135deg, #fbfaf7 0%, #f4eee6 45%, #e8ddd1 100%);
       -webkit-font-smoothing: antialiased;
     }
-    button, input { font: inherit; }
+    button, input, select { font: inherit; }
     button {
       border: 0;
       border-radius: 999px;
@@ -565,7 +662,7 @@ INDEX_HTML = r"""<!doctype html>
     p { color: var(--muted); line-height: 1.5; }
     .field { display: grid; gap: 8px; margin: 16px 0; }
     .field label { font-size: 13px; font-weight: 800; color: #424754; }
-    input[type="text"] {
+    input[type="text"], select {
       width: 100%;
       border: 1px solid var(--line);
       background: rgba(255,255,255,.72);
@@ -688,6 +785,54 @@ INDEX_HTML = r"""<!doctype html>
       position: relative;
     }
     .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .roi-trainer {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .roi-canvas-wrap {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: rgba(28, 25, 23, .06);
+      overflow: hidden;
+      min-height: 360px;
+    }
+    .roi-canvas {
+      width: 100%;
+      height: 540px;
+      display: block;
+      cursor: crosshair;
+      background: #f5f0e8;
+    }
+    .roi-controls { display: grid; gap: 12px; }
+    .example-chip {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.58);
+    }
+    .example-chip img {
+      width: 76px;
+      height: 58px;
+      border-radius: 12px;
+      object-fit: cover;
+      background: #eee7dd;
+    }
+    .label-pill {
+      display: inline-block;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 900;
+      color: #0f172a;
+      background: rgba(6,182,212,.16);
+    }
+    .label-pill.ignore { background: rgba(255,69,58,.14); color: #b42318; }
     .checklist { display: grid; gap: 10px; }
     .check {
       display: grid;
@@ -804,6 +949,7 @@ INDEX_HTML = r"""<!doctype html>
       aside { position: relative; height: auto; }
       .card, .card.third { grid-column: span 12; }
       .hero { align-items: flex-start; flex-direction: column; }
+      .roi-trainer { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -862,26 +1008,64 @@ INDEX_HTML = r"""<!doctype html>
           <div id="thumbs" class="thumbs"></div>
           <div id="imageAnalysis" class="preview" style="margin-top:16px;"></div>
         </article>
+        <article class="card wide">
+          <h3>2. Teach The Detector</h3>
+          <p>Draw a few boxes around useful structure and obvious distractions. These labels become guardrails: kept crops are promoted into unit candidates, ignored crops suppress noisy automatic proposals.</p>
+          <div class="roi-trainer">
+            <div>
+              <div class="field">
+                <label for="roiImageSelect">Training image</label>
+                <select id="roiImageSelect"></select>
+              </div>
+              <div class="roi-canvas-wrap">
+                <canvas id="roiCanvas" class="roi-canvas"></canvas>
+              </div>
+              <p class="small">Drag on the image to mark a region. After you release, Sparse2Solid suggests a label from the crop shape, but you can override it.</p>
+            </div>
+            <div class="roi-controls">
+              <div class="field">
+                <label for="roiLabel">Crop label</label>
+                <select id="roiLabel">
+                  <option value="structure">Structure / useful detail</option>
+                  <option value="opening">Opening / window / door</option>
+                  <option value="vertical">Vertical repeat / support</option>
+                  <option value="band">Horizontal band / rail</option>
+                  <option value="roofline">Roofline / upper edge</option>
+                  <option value="ignore">Ignore: tree, sky, person, flower, sign, glare</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="roiNotes">Optional note</label>
+                <input id="roiNotes" type="text" placeholder="e.g. keep one porch column, ignore flowers" />
+              </div>
+              <button id="saveRoiBtn" class="blue">Save Crop Label</button>
+              <div>
+                <h3 style="margin-top:8px;">Training Labels</h3>
+                <div id="roiExamples" class="unit-list"></div>
+              </div>
+            </div>
+          </div>
+        </article>
         <article class="card">
-          <h3>2. Check Image Coverage</h3>
+          <h3>3. Check Image Coverage</h3>
           <p>Before geometry is drafted, Sparse2Solid checks whether the images cover the views needed for a trustworthy unit-first model.</p>
           <button id="planBtn" class="orange">Check Missing Views</button>
           <div id="planSummary" class="checklist" style="margin-top:16px;"></div>
         </article>
         <article class="card">
-          <h3>3. Discover Small Geometry Units</h3>
+          <h3>4. Discover Small Geometry Units</h3>
           <p>The next pass proposes small reusable primitives: base/steps, one support, one opening, one rail segment, one cornice strip, and one roof slice. The coarse mass is only a measuring scaffold.</p>
           <button id="componentsBtn" class="blue">Identify Small Units</button>
           <div id="componentSummary" class="unit-list"></div>
         </article>
         <article class="card">
-          <h3>4. Draft Unit Geometry</h3>
+          <h3>5. Draft Unit Geometry</h3>
           <p>Ready units are drafted independently and get their own OBJ/MTL plus orbit sheet. Low-confidence units ask for targeted images first.</p>
           <button id="unitsBtn" class="blue">Build Unit Drafts</button>
           <div id="unitOutputs" class="unit-list"></div>
         </article>
         <article class="card third">
-          <h3>5. Assemble Preview</h3>
+          <h3>6. Assemble Preview</h3>
           <p>The full model should come after unit drafts. Assembly places reviewed pieces into one structure and renders orbit QA.</p>
           <button id="assembleBtn" class="orange">Assemble Current Units</button>
           <div id="assemblyOutputs" style="margin-top:16px;"></div>
@@ -903,7 +1087,14 @@ INDEX_HTML = r"""<!doctype html>
   </div>
   <div id="toast" class="toast"></div>
   <script>
-    let state = { projects: [], active: null, project: null, plan: null, components: null };
+    let state = {
+      projects: [],
+      active: null,
+      project: null,
+      plan: null,
+      components: null,
+      roi: { image: null, imageName: null, rect: null, dragStart: null, drawBounds: null }
+    };
     const $ = (id) => document.getElementById(id);
     const setStatus = (text) => $("statusText").textContent = text;
     const steps = [
@@ -983,12 +1174,15 @@ INDEX_HTML = r"""<!doctype html>
         <div>projects/${project.slug}/</div>
         <div>  images/ <span class="small">uploaded references</span></div>
         <div>  analysis/ <span class="small">image metrics + contact sheet from your photos</span></div>
+        <div>  components/training_examples.jsonl <span class="small">manual keep/ignore crop labels</span></div>
+        <div>  components/training_crops/ <span class="small">saved classifier evidence crops</span></div>
         <div>  reference_plan.json <span class="small">missing-view checklist</span></div>
         <div>  components/component_plan.json <span class="small">small-unit candidates</span></div>
         <div>  outputs/units/ <span class="small">per-unit OBJ/MTL/orbits</span></div>
         <div>  outputs/assembly/ <span class="small">full model preview</span></div>
       `;
       $("events").innerHTML = (project.events || []).map(e => `<div class="event">${e.at}<br>${e.message}</div>`).join("") || `<p class="small">No activity yet.</p>`;
+      renderRoiTrainer(project);
       renderTutorial(project);
       updateLocks(project);
       if (project.reference_plan_data) renderPlan(project.reference_plan_data, false);
@@ -999,6 +1193,132 @@ INDEX_HTML = r"""<!doctype html>
       else $("unitOutputs").innerHTML = `<p class="small">Ready unit drafts and their OBJ/MTL/orbit outputs will appear here.</p>`;
       if (project.outputs?.assembly) renderAssemblyOutputs(project.outputs.assembly);
       else $("assemblyOutputs").innerHTML = `<p class="small">Assembly unlocks after unit drafts are built.</p>`;
+    }
+
+    function renderRoiTrainer(project) {
+      const select = $("roiImageSelect");
+      const current = select.value || state.roi.imageName || project.images[0]?.name || "";
+      select.innerHTML = project.images.length
+        ? project.images.map(image => `<option value="${image.name}" ${image.name === current ? "selected" : ""}>${image.name}</option>`).join("")
+        : `<option value="">Upload images first</option>`;
+      state.roi.imageName = select.value || project.images[0]?.name || null;
+      $("roiExamples").innerHTML = (project.training_examples || []).length
+        ? project.training_examples.slice().reverse().map(example => `
+          <div class="example-chip">
+            ${example.crop_path ? `<img src="/api/projects/${project.slug}/files/${example.crop_path}" alt="${example.label} crop">` : `<div></div>`}
+            <div>
+              <span class="label-pill ${example.label === "ignore" ? "ignore" : ""}">${example.label}</span>
+              <div class="small">${example.image_name}</div>
+              ${example.notes ? `<div class="small">${example.notes}</div>` : ""}
+            </div>
+          </div>
+        `).join("")
+        : `<p class="small">No crop labels yet. Add 3-8 useful structure labels and a few ignore labels for trees, flowers, people, sky, signs, or reflections.</p>`;
+      loadRoiImage(project);
+    }
+
+    function loadRoiImage(project) {
+      const canvas = $("roiCanvas");
+      const ctx = canvas.getContext("2d");
+      const selected = project.images.find(image => image.name === state.roi.imageName) || project.images[0];
+      if (!selected) {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(520, rect.width || 520);
+        canvas.height = 360;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#f5f0e8";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#746d66";
+        ctx.font = "16px SF Pro Text, system-ui";
+        ctx.fillText("Upload images to train the detector.", 24, 42);
+        state.roi.image = null;
+        state.roi.rect = null;
+        return;
+      }
+      const image = new Image();
+      image.onload = () => {
+        state.roi.image = image;
+        state.roi.rect = null;
+        drawRoiCanvas();
+      };
+      image.src = selected.url;
+    }
+
+    function drawRoiCanvas() {
+      const canvas = $("roiCanvas");
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      const cssWidth = Math.max(520, rect.width || 760);
+      const cssHeight = Math.max(360, Math.min(560, cssWidth * 0.62));
+      canvas.width = cssWidth * ratio;
+      canvas.height = cssHeight * ratio;
+      canvas.style.height = `${cssHeight}px`;
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+      ctx.fillStyle = "#f5f0e8";
+      ctx.fillRect(0, 0, cssWidth, cssHeight);
+      if (!state.roi.image) return;
+      const img = state.roi.image;
+      const scale = Math.min(cssWidth / img.naturalWidth, cssHeight / img.naturalHeight);
+      const drawW = img.naturalWidth * scale;
+      const drawH = img.naturalHeight * scale;
+      const dx = (cssWidth - drawW) / 2;
+      const dy = (cssHeight - drawH) / 2;
+      state.roi.drawBounds = { x: dx, y: dy, w: drawW, h: drawH };
+      ctx.drawImage(img, dx, dy, drawW, drawH);
+      ctx.fillStyle = "rgba(28,25,23,.28)";
+      ctx.fillRect(0, 0, cssWidth, dy);
+      ctx.fillRect(0, dy + drawH, cssWidth, cssHeight - dy - drawH);
+      ctx.fillRect(0, dy, dx, drawH);
+      ctx.fillRect(dx + drawW, dy, cssWidth - dx - drawW, drawH);
+      if (state.roi.rect) {
+        const r = normalizedRect(state.roi.rect);
+        ctx.save();
+        ctx.strokeStyle = $("roiLabel").value === "ignore" ? "rgba(255,69,58,.95)" : "rgba(37,99,235,.95)";
+        ctx.fillStyle = $("roiLabel").value === "ignore" ? "rgba(255,69,58,.13)" : "rgba(6,182,212,.14)";
+        ctx.lineWidth = 3;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.restore();
+      }
+    }
+
+    function normalizedRect(rect) {
+      const x = Math.min(rect.x1, rect.x2);
+      const y = Math.min(rect.y1, rect.y2);
+      return { x, y, w: Math.abs(rect.x2 - rect.x1), h: Math.abs(rect.y2 - rect.y1) };
+    }
+
+    function canvasPoint(event) {
+      const bounds = $("roiCanvas").getBoundingClientRect();
+      return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+    }
+
+    function roiBBoxNormalized() {
+      if (!state.roi.rect || !state.roi.drawBounds) return null;
+      const r = normalizedRect(state.roi.rect);
+      const d = state.roi.drawBounds;
+      const x1 = Math.max(0, Math.min(1, (r.x - d.x) / d.w));
+      const y1 = Math.max(0, Math.min(1, (r.y - d.y) / d.h));
+      const x2 = Math.max(0, Math.min(1, (r.x + r.w - d.x) / d.w));
+      const y2 = Math.max(0, Math.min(1, (r.y + r.h - d.y) / d.h));
+      if (x2 - x1 < 0.015 || y2 - y1 < 0.015) return null;
+      return [x1, y1, x2, y2].map(value => Math.round(value * 100000) / 100000);
+    }
+
+    function suggestRoiLabel() {
+      const bbox = roiBBoxNormalized();
+      if (!bbox) return;
+      const w = bbox[2] - bbox[0];
+      const h = bbox[3] - bbox[1];
+      const cy = (bbox[1] + bbox[3]) / 2;
+      let label = "structure";
+      if (cy < 0.24 && w > h * 2.2) label = "roofline";
+      else if (w > h * 3.0) label = "band";
+      else if (h > w * 2.2 && w < 0.18) label = "vertical";
+      else if (h > 0.12 && w > 0.04 && w < 0.32) label = "opening";
+      $("roiLabel").value = label;
     }
 
     function renderTutorial(project) {
@@ -1052,7 +1372,9 @@ INDEX_HTML = r"""<!doctype html>
           ${component.crop_path ? `<div class="preview" style="margin-top:10px;"><img src="/api/projects/${state.active}/files/${component.crop_path}" alt="${component.label} evidence crop"></div>` : ""}
           <p class="small"><strong>Role:</strong> ${(component.role || "unit").replaceAll("_", " ")}</p>
           <p class="small"><strong>Kind:</strong> ${(component.kind || "unknown").replaceAll("_", " ")}</p>
+          <p class="small"><strong>Source:</strong> ${(component.source || "automatic").replaceAll("_", " ")}</p>
           <p class="small"><strong>Status:</strong> ${component.status.replaceAll("_", " ")}</p>
+          ${component.crop_metrics ? `<p class="small"><strong>Crop metrics:</strong> structural ${component.crop_metrics.structural_score} · organic ${component.crop_metrics.organic_ratio} · edges ${component.crop_metrics.edge_density}</p>` : ""}
           <p class="small"><strong>Evidence:</strong> ${(component.evidence || []).join(" · ")}</p>
           <ul class="needs">${component.needs.map(need => `<li>${need}</li>`).join("")}</ul>
         </div>
@@ -1184,6 +1506,58 @@ INDEX_HTML = r"""<!doctype html>
       e.preventDefault();
       e.currentTarget.style.borderColor = "rgba(0,122,255,.32)";
       upload(e.dataTransfer.files);
+    });
+
+    $("roiImageSelect").addEventListener("change", (e) => {
+      state.roi.imageName = e.target.value;
+      state.roi.rect = null;
+      if (state.project) loadRoiImage(state.project);
+    });
+
+    $("roiLabel").addEventListener("change", drawRoiCanvas);
+
+    $("roiCanvas").addEventListener("mousedown", (e) => {
+      if (!state.roi.image) return;
+      const point = canvasPoint(e);
+      state.roi.dragStart = point;
+      state.roi.rect = { x1: point.x, y1: point.y, x2: point.x, y2: point.y };
+      drawRoiCanvas();
+    });
+
+    $("roiCanvas").addEventListener("mousemove", (e) => {
+      if (!state.roi.dragStart || !state.roi.rect) return;
+      const point = canvasPoint(e);
+      state.roi.rect.x2 = point.x;
+      state.roi.rect.y2 = point.y;
+      drawRoiCanvas();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!state.roi.dragStart) return;
+      state.roi.dragStart = null;
+      suggestRoiLabel();
+      drawRoiCanvas();
+    });
+
+    $("saveRoiBtn").addEventListener("click", async () => {
+      if (!state.active) return toast("Create or choose a project before saving crop labels.");
+      const bbox = roiBBoxNormalized();
+      if (!bbox) return toast("Draw a larger crop box first.");
+      const data = await api(`/api/projects/${state.active}/training-examples`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          image_name: $("roiImageSelect").value,
+          label: $("roiLabel").value,
+          bbox_normalized: bbox,
+          notes: $("roiNotes").value
+        })
+      });
+      state.project = data.project;
+      state.roi.rect = null;
+      $("roiNotes").value = "";
+      await loadProject(state.active);
+      toast("Crop label saved. Re-run unit discovery to use it.");
     });
 
     $("planBtn").addEventListener("click", async () => {

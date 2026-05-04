@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,9 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
     crop_dir = project_dir / "components" / "crops"
     crop_dir.mkdir(parents=True, exist_ok=True)
     summary = analysis["summary"]
+    training_examples = read_training_examples(project_dir)
+    positive_examples = [example for example in training_examples if example.get("label") != "ignore"]
+    negative_examples = [example for example in training_examples if example.get("label") == "ignore"]
     candidates: list[dict[str, Any]] = []
 
     for image_record in sorted(
@@ -34,7 +38,9 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
             continue
         candidates.extend(image_candidates(path, image_record))
 
-    candidates = [candidate for candidate in candidates if candidate_passes_structural_filter(candidate)]
+    candidates.extend(manual_example_candidates(project_dir, positive_examples, image_paths, analysis))
+    candidates = [candidate for candidate in candidates if candidate.get("source") == "manual" or candidate_passes_structural_filter(candidate)]
+    candidates = [candidate for candidate in candidates if candidate.get("source") == "manual" or not overlaps_negative_example(candidate, negative_examples)]
     candidates = select_diverse_candidates(dedupe_candidates(candidates))
     units: list[dict[str, Any]] = []
     units.append(reference_envelope_unit(summary))
@@ -55,6 +61,7 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
                 "status": "ready_for_unit_draft" if confidence >= 0.50 else "needs_more_images",
                 "evidence": candidate["evidence"],
                 "source_image": candidate["source_image"],
+                "source": candidate.get("source", "automatic"),
                 "bbox": candidate["bbox"],
                 "bbox_normalized": candidate["bbox_normalized"],
                 "crop_metrics": candidate["crop_metrics"],
@@ -74,6 +81,99 @@ def discover_visual_units(project_dir: Path, analysis: dict[str, Any], image_pat
     if len(units) == 1:
         units[0]["evidence"].append("No crop proposals passed the structural filter; add clearer facade/detail images.")
     return units
+
+
+def read_training_examples(project_dir: Path) -> list[dict[str, Any]]:
+    path = project_dir / "components" / "training_examples.jsonl"
+    if not path.exists():
+        return []
+    examples = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            examples.append(json.loads(line))
+        except ValueError:
+            continue
+    return examples
+
+
+def overlaps_negative_example(candidate: dict[str, Any], negative_examples: list[dict[str, Any]]) -> bool:
+    candidate_bbox = candidate.get("bbox_normalized")
+    if not candidate_bbox:
+        return False
+    for example in negative_examples:
+        if example.get("image_name") != candidate.get("source_image"):
+            continue
+        negative_bbox = example.get("bbox_normalized")
+        if not negative_bbox or len(negative_bbox) != 4:
+            continue
+        if bbox_iou(candidate_bbox, negative_bbox) >= 0.18 or bbox_center_inside(candidate_bbox, negative_bbox):
+            return True
+    return False
+
+
+def bbox_iou(a: list[float], b: list[float]) -> float:
+    ax1, ay1, ax2, ay2 = [float(value) for value in a]
+    bx1, by1, bx2, by2 = [float(value) for value in b]
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = inter_w * inter_h
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    return inter / max(1e-9, area_a + area_b - inter)
+
+
+def bbox_center_inside(candidate_bbox: list[float], container_bbox: list[float]) -> bool:
+    x1, y1, x2, y2 = [float(value) for value in candidate_bbox]
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    bx1, by1, bx2, by2 = [float(value) for value in container_bbox]
+    return bx1 <= cx <= bx2 and by1 <= cy <= by2
+
+
+def manual_example_candidates(project_dir: Path, examples: list[dict[str, Any]], image_paths: list[Path], analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    image_records = {item["name"]: item for item in analysis["images"] if item.get("analyzable")}
+    paths = {path.name: path for path in image_paths}
+    candidates = []
+    for idx, example in enumerate(examples):
+        image_name = example.get("image_name")
+        bbox_norm = example.get("bbox_normalized")
+        path = paths.get(image_name)
+        record = image_records.get(image_name)
+        if not path or not record or not bbox_norm:
+            continue
+        image = Image.open(path)
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        width, height = image.size
+        x1 = int(float(bbox_norm[0]) * width)
+        y1 = int(float(bbox_norm[1]) * height)
+        x2 = int(float(bbox_norm[2]) * width)
+        y2 = int(float(bbox_norm[3]) * height)
+        kind = manual_kind(example.get("label", "structure"))
+        candidate = make_candidate(path, image, clamp_bbox((x1, y1, x2, y2), image.size), 1.0, kind, record, 0.90, idx)
+        candidate["source"] = "manual"
+        candidate["score"] += 0.8
+        candidate["evidence"].append(f"manual label {example.get('label')}")
+        if example.get("notes"):
+            candidate["evidence"].append(f"notes {example['notes']}")
+        candidates.append(candidate)
+    return candidates
+
+
+def manual_kind(label: str) -> str:
+    return {
+        "opening": "opening_or_shadow_region",
+        "window": "opening_or_shadow_region",
+        "door": "opening_or_shadow_region",
+        "vertical": "vertical_repeat",
+        "support": "vertical_repeat",
+        "column": "vertical_repeat",
+        "band": "horizontal_band",
+        "rail": "horizontal_band",
+        "roofline": "upper_edge_or_roofline",
+        "roof": "upper_edge_or_roofline",
+    }.get(label, "manual_structure")
 
 
 def image_candidates(path: Path, image_record: dict[str, Any]) -> list[dict[str, Any]]:
